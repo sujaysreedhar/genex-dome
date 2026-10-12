@@ -1,0 +1,9 @@
+{
+  "version": 1,
+  "view": {
+    "input": "Fisheye",
+    "output": "Fisheye",
+    "source_fov": 180.0
+  },
+  "built_in_source": "polar"
+}

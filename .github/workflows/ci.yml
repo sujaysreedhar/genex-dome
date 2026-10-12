@@ -1,0 +1,26 @@
+name: Rust checks
+on: [push, pull_request]
+permissions:
+  contents: read
+jobs:
+  windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install Rust checks
+        run: rustup toolchain install stable --profile minimal --component rustfmt --component clippy
+      - name: Formatting
+        run: cargo +stable fmt --all --check
+      - name: Lint
+        run: cargo +stable clippy --locked --all-targets -- -D warnings
+      - name: Core and recovery tests
+        run: cargo +stable test --locked
+      - name: Install media runtime
+        run: choco install ffmpeg --no-progress -y
+      - name: Media integration tests
+        shell: pwsh
+        run: |
+          $env:PATH = "C:\ProgramData\chocolatey\bin;$env:PATH"
+          cargo +stable test --locked --test media -- --ignored
+      - name: Release build
+        run: cargo +stable build --release --locked

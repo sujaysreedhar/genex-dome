@@ -1,0 +1,28 @@
+{
+  "dome_radius": 1.5,
+  "dome_center": [
+    0.0,
+    0.0,
+    0.0
+  ],
+  "dome_tilt": 0.0,
+  "mirror_radius": 0.25,
+  "mirror_center": [
+    0.0,
+    -1.2,
+    -0.35
+  ],
+  "projector": [
+    0.0,
+    -0.7,
+    0.9
+  ],
+  "projector_yaw": 0.0,
+  "projector_pitch": 0.0,
+  "throw_ratio": 1.8,
+  "lens_shift": 0.0,
+  "aspect": 1.7777778,
+  "grid_width": 65,
+  "grid_height": 41,
+  "brightness_correction": false
+}

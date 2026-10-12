@@ -1,0 +1,13 @@
+/target/
+/.tools/
+/dist/
+*.genexdomplayer.json
+!assets/*.genexdomplayer.json
+*.idome.json
+!assets/*.idome.json
+*.log
+/screenshots/
+/test-output/
+*.genexdomplayer.json.bak
+*.idome.json.bak
+*.data.bak

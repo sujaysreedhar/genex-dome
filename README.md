@@ -1,0 +1,253 @@
+# GenexDome
+
+**Open-source dome projection, media playback, and calibration.**
+
+GenexDome brings 360° media, fulldome playback, and projector calibration into one native desktop application. Load an image or movie, choose its projection, adjust the view, and send the result to a separate projector window.
+
+Built with **Rust and OpenGL**, it supports direct fisheye projection and spherical mirror installations, with editable warp meshes and reusable show settings. It is intended for planetariums, immersive displays, educational spaces, and dome experiments.
+
+**Repository:** [sujaysreedhar/genex-dome](https://github.com/sujaysreedhar/genex-dome)  
+**Current version:** `0.1.0` · **License:** [MIT](LICENSE)
+
+The application currently uses the executable name `GenexDomPlayer` and the Cargo package name `genex-dom-player`. The launch commands and session filenames below use those existing names.
+
+## Features
+
+| Feature | What you can do |
+| --- | --- |
+| Media playback | Play images and FFmpeg-supported movies with playlists, scrubbing, looping, automatic advance, playback speed, and audio volume controls. |
+| Projection conversion | Use equirectangular, fisheye, cylindrical, perspective, cubemap, and prewarped sources. |
+| 360° navigation | Adjust yaw, pitch, roll, and perspective field of view interactively. |
+| Dome output | Choose direct fisheye or spherical mirror / mesh output, with field of view, image flips, and off-centre fisheye controls. |
+| Mirror calibration | Generate warp meshes from dome, mirror, and projector geometry; preview and apply a warp; edit nodes with undo and redo. |
+| Warp compatibility | Import and export Bourke `.data` meshes with XYUV coordinates, intensity correction, and masking. |
+| Image correction | Adjust brightness, gamma, per-node intensity, and estimated brightness compensation. |
+| Stereo media | Use mono, side-by-side, and top/bottom input and output layouts. |
+| Presentation tools | Display warped multiline text, use custom fisheye backdrops, or warp a captured desktop region. |
+| Network media | Open playable network URLs and resolve YouTube URLs through external `yt-dlp`. |
+| Projector window | Keep the operator console and projector output in separate windows, with placement and fullscreen controls. |
+| Saved sessions | Save playlists, projection settings, optical geometry, and meshes in JSON sessions. |
+| Command-line tools | Generate test patterns and optical meshes, export projected PNGs, and check the media runtime. |
+
+## Requirements
+
+- **Rust 1.88 or newer** and Cargo to build from source. See the [official Rust installation guide](https://rust-lang.org/tools/install/). On Windows, install the C++ build tools required by your chosen Rust toolchain.
+- **OpenGL 3.3** for the desktop renderer.
+- **FFmpeg and FFprobe** for movie playback, audio decoding, and desktop capture.
+- **yt-dlp** for YouTube URL resolution.
+- A projector and calibrated dome setup for physical dome output. You can explore the built-in scene, images, and calibration tools on a regular monitor.
+
+Images, built-in patterns, and calibration do not require the external media tools.
+
+Windows has been built and exercised locally. Linux builds require the appropriate X11/Wayland and ALSA development libraries for your distribution; Linux and macOS have not been validated here. Desktop capture uses FFmpeg `gdigrab` on Windows and `x11grab` on Linux; macOS desktop capture is currently unavailable.
+
+## Quick start
+
+Install the prerequisites, then clone the repository and build the application:
+
+```sh
+git clone https://github.com/sujaysreedhar/genex-dome.git
+cd genex-dome
+cargo build --release --locked
+cargo run --release --locked
+```
+
+The application opens a built-in 360° scene. Drag the preview to look around. Use **Add media**, **Folder**, or drag and drop to populate the playlist, then select the correct input projection for each item.
+
+To open a fulldome movie directly:
+
+```sh
+cargo run --release --locked -- --projection fisheye "path/to/show.mp4"
+```
+
+### Windows launcher and media tools
+
+After installing Rust and its build prerequisites, you can also double-click [Start-GenexDomPlayer.cmd](Start-GenexDomPlayer.cmd). The launcher uses an existing release or debug executable, or runs Cargo to build and start the application.
+
+To install portable Windows copies of FFmpeg, FFprobe, and yt-dlp, run this from PowerShell in the repository root:
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\install-media.ps1
+. .\scripts\env.ps1
+cargo run --release --locked
+```
+
+The installer downloads the media tools into `.tools/media`. The environment script configures the current shell to use available project-local tools. `.tools/` is excluded from Git and is **not included in a fresh clone**; install Rust separately unless you already have a local toolchain there.
+
+You can also place the media executables beside `GenexDomPlayer.exe` or make them available through your system `PATH`.
+
+### Try the included sessions
+
+```sh
+cargo run --release --locked -- --session assets/calibration.genexdomplayer.json
+cargo run --release --locked -- --session assets/message.genexdomplayer.json
+```
+
+These open a polar calibration grid and a sample dome message. [assets/optics.json](assets/optics.json) and [assets/example-mirror.data](assets/example-mirror.data) provide example optical geometry and a generated warp mesh.
+
+## Set up a dome
+
+1. Configure your operating system to use an extended desktop for the operator display and projector.
+2. Load media and choose its input projection in **Projection**. A typical fulldome fisheye is a square 180° image; a typical equirectangular panorama has a 2:1 aspect ratio.
+3. Choose **Direct fisheye** for a fisheye lens, or **Spherical mirror / mesh** for a mirror installation.
+4. In **Calibration**, load your site's `.data` mesh. To create one, enter measured dome, mirror, and projector geometry, select **Generate warp preview**, and then **Apply warp**.
+5. Display the polar grid, adjust geometry and mesh nodes against the physical dome, and save the calibrated `.data` file.
+6. In **Output**, choose the projector under **Output display**, use **Identify display** to check it, then open output and enable fullscreen. Automatic display selection is available on Windows. Manual placement remains available; its coordinates use egui logical pixels.
+7. Use **Save session** to keep the playlist and calibration for the next show.
+
+The example geometry is a starting point and must be adjusted for your installation. The optical model assumes a spherical dome, spherical mirror, and pinhole projector. Physical alignment, colour calibration, and playback performance need to be checked on your hardware.
+
+## Controls
+
+| Key or gesture | Action |
+| --- | --- |
+| Space | Play / pause |
+| Arrow keys or drag | Navigate the view |
+| Shift + drag | Rotate the fisheye view |
+| Mouse wheel | Adjust perspective field of view |
+| Home | Reset orientation |
+| Comma / period | Seek backward / forward 10 seconds |
+| B | Toggle blackout |
+| F11 | Toggle console fullscreen |
+| Escape | Leave fullscreen |
+
+## Media and projection formats
+
+Media loads have a **Cancel load** action and a 30-second deadline across URL resolution, probing, and preview extraction. Cancelling or closing the application terminates the loading subprocess. Local image decoding checks cancellation before and after decoding. Stop rewinds a video and refreshes its opening frame while remaining paused.
+
+Calibration generation first shows a coverage preview. **Apply warp** commits it, while **Undo/Redo** retains up to 20 mesh changes, including node drags. Unusable generated meshes keep the previous calibration. The **Modified** indicator tracks changes since the last save.
+
+Session and mesh saves use atomic replacement and keep the previous file alongside the original as **`.bak`**. Recover by copying that backup to the original extension and opening it. The header always exposes Blackout and output status. If a selected Windows display disconnects, output closes rather than moving to another display. Use `--panel calibration` or `--panel output` to open an inspector panel at startup.
+
+**Images:** PNG, JPEG, TGA, BMP, TIFF, WebP, and GIF. GIF loading uses the first frame.
+
+**Movies:** common FFmpeg-supported formats, including MP4, MOV, MKV, AVI, and WebM. Available codecs depend on your FFmpeg build.
+
+**Cubemaps:** a 3 × 2 atlas with square faces in this order:
+
+```text
++X  -X  +Y
+-Y  +Z  -Z
+```
+
+Forward is +Z, up is +Y, and right is +X. The fisheye image centre corresponds to the forward axis.
+
+**Warp meshes:** Bourke `.data` text files use this structure:
+
+```text
+2
+Nx Ny
+x y u v intensity
+...
+```
+
+Header codes 1–5 identify perspective, fisheye, cylindrical, spherical, and cubic coordinates. Nodes are row-major from the bottom left; screen X is normalised to ±aspect and Y to ±1. The importer infers aspect from the maximum absolute X coordinate and converts bottom-up mesh V coordinates to top-down image coordinates.
+
+An intensity of zero creates a black mask. Negative intensity excludes the connected mesh quad. Mesh-node dragging selects the nearest node when the drag begins.
+
+## Command-line examples
+
+Run these commands from the repository root. On Windows, load `.\scripts\env.ps1` first if you use project-local tools.
+
+```sh
+# Check the media runtime and default optical geometry.
+cargo run --release --locked -- doctor
+
+# Generate calibration and panorama patterns.
+cargo run --release --locked -- pattern --kind polar --output polar.png
+cargo run --release --locked -- pattern --kind panorama --output panorama.png
+
+# Generate a mirror warp from the included optical geometry.
+cargo run --release --locked -- mesh --geometry assets/optics.json --aspect 1.7777778 --output warpmap.data
+
+# Convert a panorama into a square fisheye PNG.
+cargo run --release --locked -- export --input panorama.png --projection equirectangular --yaw 45 --output fisheye.png --width 1024 --height 1024
+
+# Export a movie's first frame using a saved session's view settings.
+cargo run --release --locked -- export --input movie.mp4 --session show.genexdomplayer.json --output projected.png
+
+# Restore a session, start playback, and open the projector window.
+cargo run --release --locked -- --session show.genexdomplayer.json --autoplay --projector
+```
+
+`export --session` uses the session's view settings. Without a session, use `--projection`, `--mode`, `--yaw`, and `--pitch` to configure the export. `--mesh` selects mesh output. Movie exports use the first frame.
+
+At startup, `default.data` or `warpmap.data` in the working directory is loaded automatically when no explicit `--mesh` is supplied. Saved local media paths are absolute; those files must remain accessible when you move a session to another computer.
+
+For all available command-line options:
+
+```sh
+cargo run --release --locked -- --help
+cargo run --release --locked -- export --help
+```
+
+## Development
+
+| Directory | Contents |
+| --- | --- |
+| `src/` | Desktop UI, media playback, projection math, rendering, optics, calibration, and persistence. |
+| `assets/` | GLSL shaders, example geometry, warp meshes, sessions, and the bundled font. |
+| `scripts/` | Windows environment, launcher, media installation, and packaging helpers. |
+| `tests/` | Core, reliability, and optional media integration tests. |
+| `docs/` | Validation records and known testing limits. |
+
+Run the standard checks:
+
+```sh
+cargo fmt --all --check
+cargo clippy --locked --all-targets -- -D warnings
+cargo test --locked
+```
+
+With FFmpeg and FFprobe installed, run the optional media integration test:
+
+```sh
+cargo test --locked --test media -- --ignored
+```
+
+See [the validation record](docs/VALIDATION.md) for the documented CPU/GPU comparisons, media checks, and installation limitations.
+
+### Package for Windows
+
+```powershell
+.\scripts\package.ps1
+```
+
+The script builds the release executable and copies it, the assets, documentation, and licence into `dist/GenexDomPlayer`. Media tools remain separate; provide them beside the packaged executable or through `PATH` on the destination computer. Packaging uses the repository's existing `GenexDomPlayer` application name.
+
+## Contributing
+
+Contributions are welcome, including bug fixes, projection improvements, calibration tools, documentation, and platform testing.
+
+1. Open an issue describing the problem or proposed improvement.
+2. Fork the repository and create a branch for your change.
+3. Add focused tests for behaviour changes and run the relevant checks above.
+4. Submit a pull request explaining the change and how you verified it.
+
+For bug reports, include your operating system, GPU, input projection, media format, reproduction steps, and any error output. Calibration reports benefit from an example mesh and optical settings.
+
+## Status and limitations
+
+- The documented validation covers Windows builds, projection mathematics, GPU comparisons, CLI utilities, and generated media playback tests. See [docs/VALIDATION.md](docs/VALIDATION.md) for details.
+- Physical dome/projector calibration, audible speaker playback, live desktop capture, YouTube service access, and sustained 4K playback have not been verified in the recorded validation.
+- Stereo output uses side-by-side or top/bottom packing. Frame-sequential projector synchronisation is not implemented.
+- Playback supports forward decoding and backward seeking. Continuous reverse playback is not implemented.
+- YouTube playback depends on the source's availability and the external resolver.
+
+## Acknowledgements
+
+This project is an independent implementation of dome playback and calibration workflows informed by Paul Bourke's public projection resources:
+
+- [iDome](https://paulbourke.net/dome/iDome/)
+- [Warpplayer](https://paulbourke.net/dome/warpplayer/)
+- [Spherical mirror projection tools](https://paulbourke.net/dome/fishwarp/)
+- [Meshmapper](https://paulbourke.net/dome/meshmapper/)
+- [Warp mesh format documentation](https://paulbourke.net/dome/warpingfisheye/)
+
+It is an independent open-source application, not an official release of the original iDome companion software. It does not include the physical display hardware or the games and datasets shown in the original gallery.
+
+## License
+
+The application is released under the [MIT License](LICENSE).
+
+The bundled Atkinson Hyperlegible font is covered by the [SIL Open Font License](assets/FONT-LICENSE.txt). External media tools and their dependencies retain their own licences.
