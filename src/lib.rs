@@ -1,5 +1,7 @@
 pub mod app;
+pub mod bundle;
 pub mod calibration;
+pub mod diagnostics;
 pub mod displays;
 pub mod media;
 pub mod mesh;
@@ -8,4 +10,5 @@ pub mod persistence;
 pub mod playback;
 pub mod projection;
 pub mod renderer;
+pub mod show;
 pub mod state;

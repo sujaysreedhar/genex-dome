@@ -1,0 +1,38 @@
+{
+  "version": 1,
+  "view": { "input": "Equirectangular", "output": "Fisheye" },
+  "looping": false,
+  "auto_advance": true,
+  "slide_seconds": 4.0,
+  "playlist": [
+    {
+      "path": "show/panorama.png",
+      "projection": "Equirectangular",
+      "cue": {
+        "name": "Opening · night horizon",
+        "duration_seconds": 4.0,
+        "view": { "yaw": 30.0, "pitch": 0.0, "roll": 0.0, "source_fov": 180.0, "perspective_fov": 90.0, "stereo_input": "Mono" }
+      }
+    },
+    {
+      "path": "show/polar.png",
+      "projection": "Fisheye",
+      "cue": {
+        "name": "Dome alignment grid",
+        "duration_seconds": 4.0,
+        "fade_seconds": 1.0,
+        "view": { "yaw": 0.0, "pitch": 0.0, "roll": 15.0, "source_fov": 180.0, "perspective_fov": 90.0, "stereo_input": "Mono" }
+      }
+    },
+    {
+      "path": "show/bars.png",
+      "projection": "Perspective",
+      "cue": {
+        "name": "Closing · colour check",
+        "duration_seconds": 4.0,
+        "fade_seconds": 1.0,
+        "view": { "yaw": 0.0, "pitch": 0.0, "roll": 0.0, "source_fov": 90.0, "perspective_fov": 90.0, "stereo_input": "Mono" }
+      }
+    }
+  ]
+}

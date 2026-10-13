@@ -36,10 +36,12 @@ struct Cli {
     fullscreen: bool,
     #[arg(long, hide = true)]
     screenshot: Option<PathBuf>,
+    #[arg(long, hide = true, requires_all = ["screenshot", "autoplay"])]
+    screenshot_on_show_end: bool,
     #[arg(long, hide = true)]
     gpu_check: Option<PathBuf>,
     /// Inspector panel to open on startup.
-    #[arg(long, value_parser = ["projection", "calibration", "output"])]
+    #[arg(long, value_parser = ["projection", "calibration", "output", "show"])]
     panel: Option<String>,
 }
 #[derive(Subcommand)]
@@ -89,6 +91,29 @@ enum Commands {
     },
     /// Check the media runtime and basic projection configuration.
     Doctor,
+    /// Copy a session and its local media into a new portable folder.
+    Bundle {
+        #[arg(long)]
+        session: PathBuf,
+        #[arg(long)]
+        output: PathBuf,
+    },
+    /// Validate show settings and report missing assets before a presentation.
+    CheckShow {
+        #[arg(long)]
+        session: PathBuf,
+    },
+    /// Measure timed video decoding and CPU frame delivery (no GPU or audio).
+    Benchmark {
+        #[arg(long)]
+        input: String,
+        #[arg(long, default_value_t = 10.)]
+        seconds: f64,
+        #[arg(long, default_value_t = 2160, value_parser = clap::value_parser!(u32).range(64..=8192))]
+        max_height: u32,
+        #[arg(long)]
+        output: Option<PathBuf>,
+    },
 }
 fn parse_projection(s: &str) -> Result<Projection> {
     Ok(match s.to_lowercase().as_str() {
@@ -105,6 +130,35 @@ fn run() -> Result<()> {
     let cli = Cli::parse();
     if let Some(command) = cli.command {
         match command {
+            Commands::Bundle { session, output } => {
+                let report = genex_dom_player::bundle::export(&Session::load(&session)?, &output)?;
+                println!(
+                    "Saved {} local assets and {} network cues to {}",
+                    report.copied_files,
+                    report.network_cues,
+                    output.display()
+                );
+            }
+            Commands::CheckShow { session } => {
+                let report = genex_dom_player::bundle::check(&Session::load(&session)?);
+                println!("{}", serde_json::to_string_pretty(&report)?);
+                anyhow::ensure!(
+                    report.missing.is_empty(),
+                    "Show has missing assets; relink before playback"
+                );
+            }
+            Commands::Benchmark {
+                input,
+                seconds,
+                max_height,
+                output,
+            } => {
+                let report = genex_dom_player::diagnostics::benchmark(&input, seconds, max_height)?;
+                if let Some(path) = output {
+                    report.save(&path)?;
+                }
+                println!("{}", serde_json::to_string_pretty(&report)?);
+            }
             Commands::Doctor => {
                 println!("{}", genex_dom_player::media::runtime_status());
                 let mesh = Optics::default().generate()?;
@@ -211,10 +265,7 @@ fn run() -> Result<()> {
     };
     let input = parse_projection(&cli.projection)?;
     for path in cli.files {
-        session.playlist.push(PlaylistItem {
-            path,
-            projection: input,
-        });
+        session.playlist.push(PlaylistItem::new(path, input));
     }
     let mesh_path = cli.mesh.or_else(|| {
         ["default.data", "warpmap.data"]
@@ -226,6 +277,14 @@ fn run() -> Result<()> {
         session.mesh = Some(WarpMesh::load(&path)?);
         session.view.output = Output::Mirror;
     }
+    anyhow::ensure!(
+        !cli.screenshot_on_show_end
+            || (session.auto_advance
+                && !session.looping
+                && !session.playlist.is_empty()
+                && session.built_in_source.is_none()),
+        "Show-end capture requires a non-looping, automatically advancing media show"
+    );
     let launch = Launch {
         session,
         autoplay: cli.autoplay,
@@ -233,6 +292,7 @@ fn run() -> Result<()> {
         projector_windowed: cli.projector_windowed,
         fullscreen: cli.fullscreen,
         screenshot: cli.screenshot,
+        screenshot_on_show_end: cli.screenshot_on_show_end,
         gpu_check: cli.gpu_check,
         panel: cli.panel,
     };

@@ -192,6 +192,7 @@ pub struct MediaInfo {
     pub width: u32,
     pub height: u32,
     pub duration: f64,
+    pub frame_rate: f64,
     pub is_video: bool,
     pub has_audio: bool,
 }
@@ -230,7 +231,7 @@ fn probe_controlled(target: &str, control: &LoadControl) -> Result<MediaInfo> {
             "-v",
             "error",
             "-show_entries",
-            "stream=codec_type,width,height:format=duration",
+            "stream=codec_type,width,height,avg_frame_rate:format=duration",
             "-of",
             "json",
             "-i",
@@ -265,6 +266,7 @@ fn probe_controlled(target: &str, control: &LoadControl) -> Result<MediaInfo> {
         width,
         height,
         duration,
+        frame_rate: parse_frame_rate(video["avg_frame_rate"].as_str().unwrap_or("")),
         is_video: true,
         has_audio: streams.iter().any(|s| s["codec_type"] == "audio"),
     })
@@ -294,6 +296,7 @@ fn load_controlled(
             width: image.width(),
             height: image.height(),
             duration: 0.,
+            frame_rate: 0.,
             is_video: false,
             has_audio: false,
         };
@@ -335,6 +338,44 @@ pub fn decode_size(info: &MediaInfo, max_height: u32) -> (u32, u32) {
     let w = ((info.width as f64 * h as f64 / info.height as f64).round() as u32).max(1);
     (w, h)
 }
+pub fn parse_frame_rate(value: &str) -> f64 {
+    let rate = value
+        .split_once('/')
+        .and_then(|(n, d)| Some(n.parse::<f64>().ok()? / d.parse::<f64>().ok()?))
+        .or_else(|| value.parse::<f64>().ok())
+        .unwrap_or(30.);
+    if rate.is_finite() && (1. ..=240.).contains(&rate) {
+        rate
+    } else {
+        30.
+    }
+}
+#[derive(Default)]
+struct FrameCounters {
+    decoded: AtomicU64,
+    presented: AtomicU64,
+    late: AtomicU64,
+    overwritten: AtomicU64,
+}
+#[derive(Debug, Clone, Default, serde::Serialize)]
+pub struct DecoderStats {
+    pub width: u32,
+    pub height: u32,
+    pub source_fps: f64,
+    pub elapsed_seconds: f64,
+    pub decoded: u64,
+    pub presented: u64,
+    pub dropped_late: u64,
+    pub dropped_unpresented: u64,
+}
+impl DecoderStats {
+    pub fn decoded_fps(&self) -> f64 {
+        self.decoded as f64 / self.elapsed_seconds.max(0.001)
+    }
+    pub fn presented_fps(&self) -> f64 {
+        self.presented as f64 / self.elapsed_seconds.max(0.001)
+    }
+}
 
 pub struct Decoder {
     child: Arc<Mutex<Child>>,
@@ -344,10 +385,19 @@ pub struct Decoder {
     pub position: Arc<AtomicU64>,
     pub error: Arc<Mutex<Option<String>>>,
     clock: Arc<Mutex<Option<(f64, Instant)>>>,
+    counters: Arc<FrameCounters>,
+    first_frame: Arc<Mutex<Option<Instant>>>,
+    size: [u32; 2],
+    frame_rate: f64,
 }
 impl Decoder {
     pub fn video(info: &MediaInfo, start: f64, speed: f32, max_height: u32) -> Result<Self> {
         let (w, h) = decode_size(info, max_height);
+        let fps = if info.frame_rate.is_finite() && (1. ..=240.).contains(&info.frame_rate) {
+            info.frame_rate
+        } else {
+            30.
+        };
         let mut cmd = command("ffmpeg");
         cmd.args([
             "-v",
@@ -360,20 +410,21 @@ impl Decoder {
             "0:v:0",
             "-an",
             "-vf",
-            &format!("fps=30,scale={w}:{h}"),
+            &format!("fps={fps},scale={w}:{h}"),
             "-f",
             "rawvideo",
             "-pix_fmt",
             "rgba",
             "pipe:1",
         ]);
-        Self::spawn(cmd, w, h, start, speed, false)
+        Self::spawn(cmd, [w, h], start, speed, fps, false)
     }
     pub fn capture(rect: [i32; 4], fps: u32) -> Result<Self> {
         anyhow::ensure!(
             rect[2] > 0 && rect[3] > 0 && rect[2] <= 8192 && rect[3] <= 8192,
             "Capture width and height must be 1–8192"
         );
+        anyhow::ensure!((1..=240).contains(&fps), "Capture FPS must be 1–240");
         let mut cmd = command("ffmpeg");
         cmd.args(["-v", "error"]);
         #[cfg(windows)]
@@ -416,14 +467,22 @@ impl Decoder {
         cmd.args(["-an", "-f", "rawvideo", "-pix_fmt", "rgba", "pipe:1"]);
         Self::spawn(
             cmd,
-            rect[2] as u32,
-            rect[3] as u32,
+            [rect[2] as u32, rect[3] as u32],
             0.,
-            fps as f32 / 30.,
+            1.,
+            fps as f64,
             true,
         )
     }
-    fn spawn(mut cmd: Command, w: u32, h: u32, start: f64, speed: f32, live: bool) -> Result<Self> {
+    fn spawn(
+        mut cmd: Command,
+        size: [u32; 2],
+        start: f64,
+        speed: f32,
+        frame_rate: f64,
+        live: bool,
+    ) -> Result<Self> {
+        let [w, h] = size;
         anyhow::ensure!(
             speed.is_finite() && speed > 0.,
             "Playback speed must be positive"
@@ -459,6 +518,10 @@ impl Decoder {
         );
         let clock = Arc::new(Mutex::new(None));
         let clock2 = clock.clone();
+        let counters = Arc::new(FrameCounters::default());
+        let counters2 = counters.clone();
+        let first_frame = Arc::new(Mutex::new(None));
+        let first_frame2 = first_frame.clone();
         std::thread::spawn(move || {
             let mut frame = vec![0u8; w as usize * h as usize * 4];
             let mut frame_index = 0u64;
@@ -466,7 +529,12 @@ impl Decoder {
                 if stdout.read_exact(&mut frame).is_err() {
                     break;
                 }
-                let pts = start + frame_index as f64 / 30.;
+                first_frame2
+                    .lock()
+                    .unwrap()
+                    .get_or_insert_with(Instant::now);
+                counters2.decoded.fetch_add(1, Ordering::Relaxed);
+                let pts = start + frame_index as f64 / frame_rate;
                 frame_index += 1;
                 let current_time = || {
                     let mut clock = clock2.lock().unwrap();
@@ -480,10 +548,21 @@ impl Decoder {
                     break;
                 }
                 // Catch up to the audio master without displaying a burst of late frames.
-                if !live && current_time() - pts > 1. / 30. {
+                if !live && current_time() - pts > 1. / frame_rate {
+                    counters2.late.fetch_add(1, Ordering::Relaxed);
+                    position2.store(pts.to_bits(), Ordering::Relaxed);
                     continue;
                 }
-                *latest2.lock().unwrap() = RgbaImage::from_raw(w, h, frame.clone());
+                let mut slot = latest2.lock().unwrap();
+                if slot.is_some() {
+                    counters2.overwritten.fetch_add(1, Ordering::Relaxed);
+                }
+                // Move the frame into the mailbox. The producer owns a fresh read buffer.
+                *slot = RgbaImage::from_raw(
+                    w,
+                    h,
+                    std::mem::replace(&mut frame, vec![0; w as usize * h as usize * 4]),
+                );
                 position2.store(pts.to_bits(), Ordering::Relaxed);
             }
             let _ = error_reader.join();
@@ -497,10 +576,37 @@ impl Decoder {
             position,
             error,
             clock,
+            counters,
+            first_frame,
+            size,
+            frame_rate,
         })
     }
     pub fn position(&self) -> f64 {
         f64::from_bits(self.position.load(Ordering::Relaxed))
+    }
+    pub fn take_frame(&self) -> Option<RgbaImage> {
+        let frame = self.latest.lock().unwrap().take();
+        if frame.is_some() {
+            self.counters.presented.fetch_add(1, Ordering::Relaxed);
+        }
+        frame
+    }
+    pub fn stats(&self) -> DecoderStats {
+        DecoderStats {
+            width: self.size[0],
+            height: self.size[1],
+            source_fps: self.frame_rate,
+            elapsed_seconds: self
+                .first_frame
+                .lock()
+                .unwrap()
+                .map_or(0., |start| start.elapsed().as_secs_f64()),
+            decoded: self.counters.decoded.load(Ordering::Relaxed),
+            presented: self.counters.presented.load(Ordering::Relaxed),
+            dropped_late: self.counters.late.load(Ordering::Relaxed),
+            dropped_unpresented: self.counters.overwritten.load(Ordering::Relaxed),
+        }
     }
     pub fn sync_to_audio(&self, position: f64) {
         if position.is_finite() {

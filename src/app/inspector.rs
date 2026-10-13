@@ -3,21 +3,23 @@ use super::*;
 impl DomeApp {
     pub(super) fn inspector(&mut self, ctx: &egui::Context) {
         egui::SidePanel::right("inspector")
-            .default_width(300.)
-            .min_width(270.)
+            .default_width(330.)
+            .min_width(320.)
             .resizable(true)
             .show(ctx, |ui| {
                 ui.add_space(14.);
-                ui.horizontal(|ui| {
+                ui.horizontal_wrapped(|ui| {
                     ui.selectable_value(&mut self.tab, Tab::Projection, "Projection");
                     ui.selectable_value(&mut self.tab, Tab::Calibration, "Calibration");
                     ui.selectable_value(&mut self.tab, Tab::Output, "Output");
+                    ui.selectable_value(&mut self.tab, Tab::Show, "Show");
                 });
                 ui.add_space(12.);
                 egui::ScrollArea::vertical().show(ui, |ui| match self.tab {
                     Tab::Projection => self.projection_ui(ui),
                     Tab::Calibration => self.calibration_ui(ui),
                     Tab::Output => self.output_ui(ui),
+                    Tab::Show => self.show_ui(ui),
                 });
             });
     }
@@ -141,6 +143,8 @@ impl DomeApp {
             candidate.built_in_source = Some("text".into());
             match session_frame(&candidate) {
                 Ok(frame) => {
+                    self.sequencer.reset();
+                    self.preloader.clear();
                     self.playback.reset_source("Dome message".into());
                     self.error = None;
                     self.session.built_in_source = candidate.built_in_source;
@@ -554,6 +558,8 @@ impl DomeApp {
                 self.stop();
             } else {
                 self.playback.reset_source("Live screen capture".into());
+                self.sequencer.reset();
+                self.preloader.clear();
                 self.error = None;
                 match Decoder::capture(self.capture_rect, 30) {
                     Ok(decoder) => {

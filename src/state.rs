@@ -176,10 +176,91 @@ impl View {
         Ok(())
     }
 }
+/// Source settings travel with a cue; physical output calibration stays with the session.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CueView {
+    pub yaw: f32,
+    pub pitch: f32,
+    pub roll: f32,
+    pub source_fov: f32,
+    pub perspective_fov: f32,
+    pub stereo_input: Stereo,
+}
+impl CueView {
+    pub fn capture(view: &View) -> Self {
+        Self {
+            yaw: view.yaw,
+            pitch: view.pitch,
+            roll: view.roll,
+            source_fov: view.source_fov,
+            perspective_fov: view.perspective_fov,
+            stereo_input: view.stereo_input,
+        }
+    }
+    pub fn apply(&self, view: &mut View) {
+        view.yaw = self.yaw;
+        view.pitch = self.pitch;
+        view.roll = self.roll;
+        view.source_fov = self.source_fov;
+        view.perspective_fov = self.perspective_fov;
+        view.stereo_input = self.stereo_input;
+    }
+}
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(default)]
+pub struct CueSettings {
+    pub name: String,
+    pub view: Option<CueView>,
+    /// Media seconds for movies; wall seconds for stills. None uses the session default.
+    pub duration_seconds: Option<f64>,
+    /// Total fade-out + fade-in time on entry; zero selects a cut.
+    pub fade_seconds: f32,
+}
+impl CueSettings {
+    pub fn validate(&self) -> anyhow::Result<()> {
+        anyhow::ensure!(
+            self.duration_seconds
+                .is_none_or(|d| d.is_finite() && (0.1..=86400.).contains(&d)),
+            "Cue duration must be 0.1–86400 seconds"
+        );
+        anyhow::ensure!(
+            self.fade_seconds.is_finite() && (0. ..=10.).contains(&self.fade_seconds),
+            "Cue fade must be 0–10 seconds"
+        );
+        if let Some(preset) = &self.view {
+            let mut view = View::default();
+            preset.apply(&mut view);
+            view.validate()?;
+        }
+        Ok(())
+    }
+}
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PlaylistItem {
     pub path: PathBuf,
     pub projection: Projection,
+    #[serde(default)]
+    pub cue: CueSettings,
+}
+impl PlaylistItem {
+    pub fn new(path: PathBuf, projection: Projection) -> Self {
+        Self {
+            path,
+            projection,
+            cue: CueSettings::default(),
+        }
+    }
+    pub fn label(&self) -> String {
+        if self.cue.name.trim().is_empty() {
+            self.path
+                .file_name()
+                .unwrap_or_default()
+                .to_string_lossy()
+                .into_owned()
+        } else {
+            self.cue.name.clone()
+        }
+    }
 }
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(default)]
@@ -222,38 +303,7 @@ impl Default for Session {
 impl Session {
     pub fn load(path: &std::path::Path) -> anyhow::Result<Self> {
         let mut s: Self = serde_json::from_str(&std::fs::read_to_string(path)?)?;
-        anyhow::ensure!(s.version == 1, "Unsupported session version {}", s.version);
-        anyhow::ensure!(
-            s.built_in_source.as_ref().is_none_or(|v| [
-                "panorama",
-                "polar",
-                "cartesian",
-                "bars",
-                "text"
-            ]
-            .contains(&v.as_str())),
-            "Unknown built-in source"
-        );
-        s.view.validate()?;
-        if let Some(m) = &s.mesh {
-            m.validate()?;
-        }
-        s.optics.validate()?;
-        anyhow::ensure!(
-            s.slide_seconds.is_finite()
-                && s.slide_seconds >= 0.1
-                && s.volume.is_finite()
-                && (0. ..=1.).contains(&s.volume),
-            "Invalid playback settings"
-        );
-        anyhow::ensure!(
-            s.output_position
-                .iter()
-                .chain(s.output_size.iter())
-                .all(|v| v.is_finite())
-                && s.output_size.iter().all(|v| *v >= 64.),
-            "Invalid projector window geometry"
-        );
+        s.validate()?;
         let base = path.parent().unwrap_or(std::path::Path::new("."));
         if let Some(p) = &mut s.view.background {
             if p.is_relative() {
@@ -261,13 +311,13 @@ impl Session {
             }
         }
         for item in &mut s.playlist {
-            if item.path.is_relative() && !item.path.to_string_lossy().starts_with("http") {
+            if item.path.is_relative() && !crate::bundle::is_network(&item.path) {
                 item.path = base.join(&item.path);
             }
         }
         Ok(s)
     }
-    pub fn save(&self, path: &std::path::Path) -> anyhow::Result<()> {
+    pub fn validate(&self) -> anyhow::Result<()> {
         self.view.validate()?;
         anyhow::ensure!(self.version == 1, "Unsupported session version");
         anyhow::ensure!(
@@ -296,6 +346,18 @@ impl Session {
                 && self.output_size.iter().all(|v| *v >= 64.),
             "Invalid projector window geometry"
         );
+        for item in &self.playlist {
+            anyhow::ensure!(!item.path.as_os_str().is_empty(), "Cue has no media path");
+            item.cue.validate()?;
+        }
+        if let Some(mesh) = &self.mesh {
+            mesh.validate()?;
+        }
+        self.optics.validate()?;
+        Ok(())
+    }
+    pub fn save(&self, path: &std::path::Path) -> anyhow::Result<()> {
+        self.validate()?;
         let mut saved = self.clone();
         let base = std::env::current_dir()?;
         if let Some(p) = &mut saved.view.background {
@@ -304,14 +366,10 @@ impl Session {
             }
         }
         for item in &mut saved.playlist {
-            if item.path.is_relative() && !item.path.to_string_lossy().starts_with("http") {
+            if item.path.is_relative() && !crate::bundle::is_network(&item.path) {
                 item.path = base.join(&item.path);
             }
         }
-        if let Some(m) = &saved.mesh {
-            m.validate()?;
-        }
-        saved.optics.validate()?;
         crate::persistence::atomic_write(path, serde_json::to_string_pretty(&saved)?.as_bytes())?;
         Ok(())
     }

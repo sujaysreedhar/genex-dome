@@ -35,6 +35,7 @@ fn movie_preview_seek_stream_audio_and_shutdown() {
     assert_eq!(frame.dimensions(), (128, 64));
     assert!(frame.get_pixel(64, 32)[0] > 240);
     assert!(info.has_audio);
+    assert_eq!(info.frame_rate, 30.);
     assert!((info.duration - 2.).abs() < 0.1);
     let decoder = Decoder::video(&info, 0.5, 2., 64).unwrap();
     let audio = match Audio::start(&info, 0.5, 2., 0.) {
@@ -131,4 +132,64 @@ fn movie_preview_seek_stream_audio_and_shutdown() {
     assert!(decoder.error.lock().unwrap().is_none());
     drop(decoder);
     std::fs::remove_file(path).unwrap();
+}
+
+#[test]
+#[ignore = "requires the optional FFmpeg and FFprobe runtime"]
+fn native_frame_rates_dropped_frame_accounting_and_benchmark() {
+    let dir = tempfile::tempdir().unwrap();
+    for fps in [24, 60] {
+        let path = dir.path().join(format!("{fps}.mp4"));
+        assert!(media::command("ffmpeg")
+            .args([
+                "-v",
+                "error",
+                "-y",
+                "-f",
+                "lavfi",
+                "-i",
+                &format!("testsrc2=s=128x64:r={fps}:d=1"),
+                "-c:v",
+                "libx264",
+                "-pix_fmt",
+                "yuv420p"
+            ])
+            .arg(&path)
+            .status()
+            .unwrap()
+            .success());
+        let info = media::probe(&path.to_string_lossy()).unwrap();
+        assert_eq!(info.frame_rate, fps as f64);
+        let decoder = Decoder::video(&info, 0., 1., 64).unwrap();
+        let limit = Instant::now() + Duration::from_secs(5);
+        while decoder.position() < 0.25 {
+            assert!(Instant::now() < limit);
+            std::thread::sleep(Duration::from_millis(5));
+        }
+        assert!(decoder.stats().dropped_unpresented > 0);
+        decoder.sync_to_audio(0.6);
+        while !decoder.ended.load(std::sync::atomic::Ordering::Relaxed) {
+            let _ = decoder.take_frame();
+            assert!(Instant::now() < limit);
+            std::thread::sleep(Duration::from_millis(2));
+        }
+        let _ = decoder.take_frame();
+        let stats = decoder.stats();
+        assert_eq!(stats.source_fps, fps as f64);
+        assert_eq!(stats.decoded, fps as u64);
+        assert!(stats.dropped_late > 0);
+        assert!(stats.presented > 0);
+        assert_eq!(
+            stats.decoded,
+            stats.presented + stats.dropped_late + stats.dropped_unpresented
+        );
+        assert!(decoder.position() >= 0.9);
+        drop(decoder);
+        let report =
+            genex_dom_player::diagnostics::benchmark(&path.to_string_lossy(), 2., 64).unwrap();
+        let stats = report.video.unwrap();
+        assert_eq!(stats.decoded, fps as u64);
+        assert!(stats.presented >= (fps - 3) as u64);
+        assert!((stats.presented_fps() - fps as f64).abs() < 6.);
+    }
 }

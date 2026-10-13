@@ -18,6 +18,7 @@ fn switching_to_builtin_clears_video_and_queued_autoplay() {
             width: 32,
             height: 32,
             duration: 60.,
+            frame_rate: 30.,
             is_video: true,
             has_audio: false,
         }),

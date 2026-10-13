@@ -1,5 +1,20 @@
 # Validation record
 
+## Show production and performance — 13 October 2026 (0.2.0)
+
+- Added per-cue source-view presets, names, durations, entry fades through black with audio gain, pause-aware still timing, and next-cue probe/opening-frame preloading. Non-looping shows stop at the final cue; EOF is retained if a short movie ends during its incoming fade.
+- Added portable folder bundles with staged export, local-asset deduplication, relative paths, network-cue preservation and installation-specific display reset. Relinking changes missing files only when a filename match is unique.
+- Added decode/delivery FPS, late and overwritten frame counters, CPU texture-upload timings, software A/V clock offsets, JSON reports and a CLI decode benchmark. Movies now use reported average source cadence rather than a fixed 30 fps; variable-rate material is normalized to that cadence.
+- Formatting and Clippy pass with warnings denied. 49 standard tests pass (26 core, 8 reliability, 11 show, 4 subprocess/helper tests). The show tests exercise legacy compatibility, preset isolation, invalid cue rejection, pause/loading fade boundaries, final-cue policy, preload invalidation, bundle relocation, duplicate filenames, staged-export failure, ambiguous relinking and source-time versus still-time durations.
+- Both optional FFmpeg tests pass: existing preview/seek/audio/rewind/shutdown coverage and new 24/60-fps cadence, late/overwritten frame accounting and benchmark checks. Audio-device coverage remains conditional; audible synchronization was not established.
+- All 41 existing CPU/GPU comparisons pass. The Show editor was visually inspected. The native three-cue image demo ran to **Show complete**. A mixed still/24-fps movie show with separate output also completed; its 0.33-second final movie ended inside a 1-second incoming fade, and all 8 movie frames were delivered with zero drops.
+- A generated H.264 3840 × 2160, 30-fps, 3-second clip delivered all 90 frames with zero late or overwritten drops in the CLI decode benchmark. This measures short timed decoding and CPU delivery without GPU upload or audio; it does not establish sustained 4K projector performance.
+- CLI bundle export and asset checking passed for the demo. Relocation and missing-original-media checks also passed in automated tests. Windows release and distribution package were rebuilt at 0.2.0.
+
+Screenshots and reports are excluded from Git under `test-output/`: `phase2-show.png`, `phase2-complete.png`, `phase2-mixed-complete.png`, `phase2-gpu.txt` and `phase2-4k-decode.json`. The reproducible demo is `assets/show.genexdomplayer.json`; its generated patterns are in `assets/show/`.
+
+Remaining installation acceptance: run a mixed-media bundle on a second physical machine and the intended dome; measure long-run frame delivery, speaker A/V synchronization and display reconnection on target hardware. Preloading caches one opening frame and probe result; it does not prestart the video/audio decoders or guarantee gapless transitions. Bundle network cues require internet and external media tools. Physical calibration, audible output and sustained 4K performance remain unverified.
+
 ## Reliability and operator update — 12 October 2026
 
 - Formatting and Clippy pass with warnings denied.

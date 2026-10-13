@@ -7,7 +7,7 @@ GenexDome brings 360° media, fulldome playback, and projector calibration into 
 Built with **Rust and OpenGL**, it supports direct fisheye projection and spherical mirror installations, with editable warp meshes and reusable show settings. It is intended for planetariums, immersive displays, educational spaces, and dome experiments.
 
 **Repository:** [sujaysreedhar/genex-dome](https://github.com/sujaysreedhar/genex-dome)  
-**Current version:** `0.1.0` · **License:** [MIT](LICENSE)
+**Current version:** `0.2.0` · **License:** [MIT](LICENSE)
 
 The application currently uses the executable name `GenexDomPlayer` and the Cargo package name `genex-dom-player`. The launch commands and session filenames below use those existing names.
 
@@ -27,6 +27,9 @@ The application currently uses the executable name `GenexDomPlayer` and the Carg
 | Network media | Open playable network URLs and resolve YouTube URLs through external `yt-dlp`. |
 | Projector window | Keep the operator console and projector output in separate windows, with placement and fullscreen controls. |
 | Saved sessions | Save playlists, projection settings, optical geometry, and meshes in JSON sessions. |
+| Show cues | Name cues, store source-view presets, set durations, fade through black with audio, and preload the next opening frame. |
+| Portable shows | Export a folder with local media, backdrop, calibration and cues; open it elsewhere and relink missing media. |
+| Playback diagnostics | Inspect decode/delivery FPS, late and replaced frames, texture upload time and video/audio clock offset; save JSON reports. |
 | Command-line tools | Generate test patterns and optical meshes, export projected PNGs, and check the media runtime. |
 
 ## Requirements
@@ -84,6 +87,26 @@ cargo run --release --locked -- --session assets/message.genexdomplayer.json
 ```
 
 These open a polar calibration grid and a sample dome message. [assets/optics.json](assets/optics.json) and [assets/example-mirror.data](assets/example-mirror.data) provide example optical geometry and a generated warp mesh.
+
+### Build and run a show
+
+Open **Show** in the inspector after adding media to the library. For each selected cue, give it a name and adjust its view in **Projection**, then choose **Store current view** in Show. Presets store source projection, yaw, pitch, roll, source/view field of view and input stereo; the session retains output calibration, brightness, gamma and projector settings. **Use current view as show default** sets the source view used by cues without presets.
+
+Enable **Custom duration** to hold an image for a chosen number of seconds, or stop a movie at that media time. Otherwise images use **s / slide** and movies run to their end. Image timing pauses with playback; movie durations follow media time, including speed changes. **Fade through black on entry** splits its time equally between outgoing and incoming fades. Output remains black while a source loads, and audio volume follows the fade. Fades add outgoing time; the incoming fade counts toward the new cue's duration. A cue that ends during its incoming fade advances after the fade completes.
+
+Enable **Auto advance** to run the cue list. With **Loop** enabled the whole show repeats; with Loop off it stops on the final cue. Without Auto advance, Loop repeats only the current cue. The next cue's probe result and opening frame preload in the background. This avoids repeating a completed preview load; video/audio decoders still start when the cue activates, so this is not guaranteed gapless playback. Failed or cancelled loads stop that activation with black output and an error.
+
+Try the included three-cue show, which demonstrates presets, durations, fades and automatic stopping:
+
+```sh
+cargo run --release --locked -- --session assets/show.genexdomplayer.json --panel show --autoplay
+```
+
+Under **Show → Portable show**, choose **Export show bundle…** and select a parent folder. Export creates a new folder using the entered name, copying local media and the backdrop once per unique file with relative paths. It embeds the mesh and show settings and clears the installation-specific display selection. Existing bundle folders are preserved; missing local assets prevent export. Network cues remain URLs and require internet and their runtime tools.
+
+Copy the entire folder to another computer, then choose **Open bundle** or open its `show.genexdomplayer.json` manifest. Select and verify the destination projector before opening output. **Relink folder** searches a selected folder and its subfolders for unique filename matches to missing assets; ambiguous matches stay unresolved. Use a cue's **··· → Replace / relink file…** for an exact replacement. Save the session after relinking. Ordinary session saves retain absolute media paths; use a new bundle export when you need portability again.
+
+**Playback diagnostics** in Show report averages for the current decoder run. Delivered frames reach the console; projector refresh is not measured. Late frames missed their clock deadline, while replaced frames were overwritten before the console consumed them. Upload time measures CPU submission to OpenGL, and video/audio offset compares software clocks rather than speaker latency. **Save diagnostics JSON** exports those measurements. Movies use their reported average frame rate, with variable-rate material normalized to that cadence and unknown rates falling back to 30 fps.
 
 ## Set up a dome
 
@@ -168,6 +191,13 @@ cargo run --release --locked -- export --input movie.mp4 --session show.genexdom
 
 # Restore a session, start playback, and open the projector window.
 cargo run --release --locked -- --session show.genexdomplayer.json --autoplay --projector
+
+# Check assets and package a show into a new folder.
+cargo run --release --locked -- check-show --session assets/show.genexdomplayer.json
+cargo run --release --locked -- bundle --session assets/show.genexdomplayer.json --output my-show-bundle
+
+# Measure timed decoding and CPU frame delivery without a window or audio device.
+cargo run --release --locked -- benchmark --input movie.mp4 --seconds 10 --max-height 2160 --output decode-report.json
 ```
 
 `export --session` uses the session's view settings. Without a session, use `--projection`, `--mode`, `--yaw`, and `--pitch` to configure the export. `--mesh` selects mesh output. Movie exports use the first frame.

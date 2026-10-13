@@ -280,10 +280,12 @@ fn session_keeps_network_urls_and_local_paths_resolvable() {
             genex_dom_player::state::PlaylistItem {
                 path: "https://example.com/movie.mp4".into(),
                 projection: Projection::Equirectangular,
+                cue: Default::default(),
             },
             genex_dom_player::state::PlaylistItem {
                 path: "local-movie.mp4".into(),
                 projection: Projection::Fisheye,
+                cue: Default::default(),
             },
         ],
         ..Session::default()

@@ -1,12 +1,14 @@
 mod inspector;
+mod show_ui;
 
 use crate::{
     calibration::MeshHistory,
     media::{self, Decoder},
     mesh::WarpMesh,
-    playback::Playback,
+    playback::{Playback, Preloader},
     projection::{self, Pattern},
     renderer::{self, Renderer},
+    show::{self, Sequencer},
     state::{Output, PlaylistItem, Projection, Session, Stereo},
 };
 use eframe::{
@@ -30,6 +32,7 @@ pub struct Launch {
     pub fullscreen: bool,
     pub projector_windowed: bool,
     pub screenshot: Option<PathBuf>,
+    pub screenshot_on_show_end: bool,
     pub gpu_check: Option<PathBuf>,
     pub panel: Option<String>,
 }
@@ -38,6 +41,7 @@ enum Tab {
     Projection,
     Calibration,
     Output,
+    Show,
 }
 
 pub struct DomeApp {
@@ -46,6 +50,13 @@ pub struct DomeApp {
     gl: Arc<glow::Context>,
     frame: RgbaImage,
     playback: Playback,
+    preloader: Preloader,
+    sequencer: Sequencer,
+    last_tick: Instant,
+    cue_base: crate::state::CueView,
+    bundle_job: Option<mpsc::Receiver<anyhow::Result<crate::bundle::BundleReport>>>,
+    bundle_name: String,
+    diagnostics: crate::diagnostics::Diagnostics,
     mesh_history: MeshHistory,
     candidate_mesh: Option<WarpMesh>,
     preview_source: bool,
@@ -69,6 +80,8 @@ pub struct DomeApp {
     screenshot: Option<PathBuf>,
     frame_count: u32,
     screenshot_requested: bool,
+    screenshot_on_show_end: bool,
+    show_complete: bool,
     help: bool,
 }
 impl DomeApp {
@@ -89,12 +102,20 @@ impl DomeApp {
             renderer.upload_background(&gl, Some(&image::open(path)?.to_rgba8()))?;
         }
         let mesh_history = MeshHistory::new(&launch.session.mesh);
+        let cue_base = crate::state::CueView::capture(&launch.session.view);
         let mut app = Self {
             session: launch.session,
             renderer: Arc::new(Mutex::new(renderer)),
             gl,
             frame,
             playback: Playback::default(),
+            preloader: Preloader::default(),
+            sequencer: Sequencer::default(),
+            last_tick: Instant::now(),
+            cue_base,
+            bundle_job: None,
+            bundle_name: "show-bundle".into(),
+            diagnostics: crate::diagnostics::Diagnostics::default(),
             mesh_history,
             candidate_mesh: None,
             preview_source: false,
@@ -103,6 +124,7 @@ impl DomeApp {
             tab: match launch.panel.as_deref() {
                 Some("calibration") => Tab::Calibration,
                 Some("output") => Tab::Output,
+                Some("show") => Tab::Show,
                 _ => Tab::Projection,
             },
             projector: launch.projector,
@@ -122,6 +144,8 @@ impl DomeApp {
             screenshot: launch.screenshot,
             frame_count: 0,
             screenshot_requested: false,
+            screenshot_on_show_end: launch.screenshot_on_show_end,
+            show_complete: false,
             help: false,
         };
         app.playback.title = built_in_title(app.session.built_in_source.as_deref());
@@ -138,33 +162,61 @@ impl DomeApp {
         Ok(app)
     }
     fn set_frame(&mut self, image: RgbaImage) {
+        let start = Instant::now();
         self.renderer.lock().unwrap().upload(&self.gl, &image);
+        self.diagnostics
+            .upload(start.elapsed().as_secs_f64() * 1000.);
         self.frame = image;
     }
     fn stop(&mut self) {
         self.playback.pause();
     }
     fn select(&mut self, index: usize) {
+        self.sequencer.reset();
+        self.select_cue(index);
+    }
+    fn select_cue(&mut self, index: usize) {
+        self.show_complete = false;
         let Some(item) = self.session.playlist.get(index) else {
             return;
         };
         let path = item.path.to_string_lossy().to_string();
-        let title = item
-            .path
-            .file_name()
-            .unwrap_or_default()
-            .to_string_lossy()
-            .to_string();
+        let title = item.label();
+        let preset = item
+            .cue
+            .view
+            .clone()
+            .unwrap_or_else(|| self.cue_base.clone());
+        let projection = item.projection;
+        let cached = self.preloader.take(&path, self.playback.max_height);
         self.playback.reset_source(title);
+        self.diagnostics = crate::diagnostics::Diagnostics::default();
+        self.sequencer.reset_cue();
         self.playback.selected = Some(index);
         self.session.built_in_source = None;
-        self.session.view.input = item.projection;
-        if item.projection == Projection::Perspective && self.session.view.source_fov >= 179. {
+        preset.apply(&mut self.session.view);
+        self.session.view.input = projection;
+        if projection == Projection::Perspective && self.session.view.source_fov >= 179. {
             self.session.view.source_fov = 90.;
         }
-        self.playback.load(path, 0.);
-        self.status = "Loading media…".into();
         self.error = None;
+        match cached {
+            Some(Ok((info, frame))) => {
+                self.playback.info = Some(info);
+                self.set_frame(frame);
+                self.sequencer.loaded();
+                self.status = "Preloaded cue ready".into();
+            }
+            Some(Err(error)) => {
+                self.sequencer.reset();
+                self.error = Some(format!("{error:#}"));
+                self.status = "Media could not be loaded".into();
+            }
+            None => {
+                self.playback.load(path, 0.);
+                self.status = "Loading media…".into();
+            }
+        }
     }
     fn add_paths(&mut self, paths: Vec<PathBuf>) {
         let old_len = self.session.playlist.len();
@@ -182,11 +234,10 @@ impl DomeApp {
                     }
                     Err(error) => self.error = Some(format!("Cannot read folder: {error}")),
                 }
-            } else if media::is_media(&path) || path.to_string_lossy().starts_with("http") {
-                self.session.playlist.push(PlaylistItem {
-                    path,
-                    projection: self.session.view.input,
-                });
+            } else if media::is_media(&path) || crate::bundle::is_network(&path) {
+                self.session
+                    .playlist
+                    .push(PlaylistItem::new(path, self.session.view.input));
             } else if path.extension().is_some_and(|e| e == "data") {
                 self.load_mesh(path);
             } else if path.to_string_lossy().ends_with(".genexdomplayer.json")
@@ -203,9 +254,40 @@ impl DomeApp {
         if self.playback.pending.is_some() {
             return;
         }
+        if self.playback.selected.is_some() && self.playback.info.is_none() {
+            return;
+        }
         if self.playback.playing {
             self.stop();
             return;
+        }
+        if self.sequencer.holding_outgoing()
+            || (self.sequencer.transitioning() && self.playback.ended)
+        {
+            self.playback.playing = true;
+            return;
+        }
+        if let Some(item) = self
+            .playback
+            .selected
+            .and_then(|index| self.session.playlist.get(index))
+        {
+            let video = self
+                .playback
+                .info
+                .as_ref()
+                .is_some_and(|info| info.is_video);
+            let at_end = show::duration_reached(
+                &item.cue,
+                video,
+                self.playback.position,
+                self.sequencer.elapsed,
+                self.session.slide_seconds,
+            );
+            if at_end && !self.sequencer.transitioning() {
+                self.playback.position = 0.;
+                self.sequencer.reset_cue();
+            }
         }
         match self.playback.play(self.session.volume) {
             Ok(warning) => self.error = warning,
@@ -213,6 +295,7 @@ impl DomeApp {
         }
     }
     fn seek(&mut self, to: f64) {
+        self.sequencer.reset();
         match self.playback.seek(to, self.session.volume) {
             Ok(warning) => {
                 if warning.is_some() {
@@ -229,8 +312,58 @@ impl DomeApp {
         let next = (self.playback.selected.unwrap_or(0) as i32 + delta)
             .rem_euclid(self.session.playlist.len() as i32) as usize;
         let was = self.playback.playing;
-        self.select(next);
-        self.playback.startup_autoplay = was;
+        if was && delta > 0 && !self.sequencer.transitioning() {
+            self.request_cue(next);
+        } else {
+            self.select(next);
+            self.resume_after_select(was);
+        }
+    }
+    fn resume_after_select(&mut self, playing: bool) {
+        if !playing || self.error.is_some() {
+            return;
+        }
+        if self.playback.pending.is_some() {
+            self.playback.startup_autoplay = true;
+        } else {
+            self.toggle_play();
+        }
+    }
+    fn request_cue(&mut self, next: usize) {
+        let seconds = self.session.playlist[next].cue.fade_seconds;
+        if let Some(index) = self.sequencer.request(next, seconds) {
+            self.select_cue(index);
+            self.resume_after_select(true);
+        }
+    }
+    fn cue_finished(&mut self) {
+        let Some(index) = self.playback.selected else {
+            self.stop();
+            return;
+        };
+        let next = if self.session.auto_advance {
+            show::next_index(index, self.session.playlist.len(), self.session.looping)
+        } else if self.session.looping {
+            Some(index)
+        } else {
+            None
+        };
+        if let Some(next) = next {
+            self.request_cue(next);
+        } else {
+            self.stop();
+            self.show_complete = true;
+            self.status = "Show complete".into();
+        }
+    }
+    fn output_view(&self) -> crate::state::View {
+        let mut view = self.session.view.clone();
+        let gain = self.sequencer.gain();
+        view.brightness *= gain;
+        view.blackout |= gain == 0.;
+        view.blackout |= self.playback.pending.is_some();
+        view.blackout |= self.playback.selected.is_some() && self.playback.info.is_none();
+        view
     }
     fn apply_mesh(&mut self, mesh: WarpMesh) -> bool {
         match self.mesh_history.apply(&mut self.session.mesh, mesh) {
@@ -268,6 +401,9 @@ impl DomeApp {
                 self.mesh_history = MeshHistory::new(&session.mesh);
                 self.candidate_mesh = None;
                 self.session = session;
+                self.cue_base = crate::state::CueView::capture(&self.session.view);
+                self.sequencer.reset();
+                self.preloader.clear();
                 self.output_placed = false;
                 self.refresh_background();
                 self.set_frame(frame);
@@ -282,6 +418,8 @@ impl DomeApp {
         }
     }
     fn show_pattern(&mut self, pattern: Pattern) {
+        self.sequencer.reset();
+        self.preloader.clear();
         self.playback.reset_source(format!("{pattern:?}"));
         self.error = None;
         self.session.built_in_source = Some(
@@ -345,6 +483,13 @@ impl DomeApp {
         });
     }
     fn tick(&mut self, ctx: &egui::Context) {
+        let now = Instant::now();
+        let delta = now.duration_since(self.last_tick).as_secs_f64();
+        self.last_tick = now;
+        if let Some(index) = self.sequencer.tick(delta, self.playback.playing) {
+            self.select_cue(index);
+            self.resume_after_select(true);
+        }
         if self.projector && self.display_check.elapsed() >= Duration::from_secs(2) {
             self.displays = crate::displays::list();
             self.display_check = Instant::now();
@@ -370,54 +515,115 @@ impl DomeApp {
                         );
                     }
                     self.set_frame(frame);
+                    self.sequencer.loaded();
                     if self.playback.startup_autoplay {
                         self.playback.startup_autoplay = false;
                         self.toggle_play();
                     }
                 }
                 Err(error) => {
+                    self.sequencer.reset();
                     self.status = "Media could not be loaded".into();
                     self.error = Some(format!("{error:#}"));
                 }
             }
         }
-        let mut finished = false;
+        let mut finished = self.playback.ended;
         let mut decoded = None;
+        let mut decoder_failed = false;
         if let Some(decoder) = &self.playback.decoder {
             if let Some(audio) = &self.playback.audio {
                 if !audio.sink.empty() {
                     decoder.sync_to_audio(audio.position());
                 }
             }
-            decoded = decoder.latest.lock().unwrap().take();
+            decoded = decoder.take_frame();
             self.playback.position = decoder.position();
             finished = decoder.ended.load(std::sync::atomic::Ordering::Relaxed);
+            self.playback.ended = finished;
             if let Some(error) = decoder.error.lock().unwrap().take() {
                 self.error = Some(error);
+                decoder_failed = true;
             }
+            self.diagnostics.video = Some(decoder.stats());
+            self.diagnostics.av_offset_ms = self
+                .playback
+                .audio
+                .as_ref()
+                .filter(|audio| !audio.sink.empty())
+                .map(|audio| (self.playback.position - audio.position()) * 1000.);
         }
         if let Some(frame) = decoded {
             self.set_frame(frame);
         }
-        if finished {
-            let was_capture = self.playback.capture_active;
+        if decoder_failed || (finished && self.playback.capture_active) {
             self.stop();
-            if !was_capture && self.error.is_none() {
-                if self.session.auto_advance {
-                    self.playback.playing = true;
-                    self.advance(1);
-                } else if self.session.looping {
-                    self.playback.position = 0.;
-                    self.toggle_play();
-                }
-            }
+            self.sequencer.reset();
         }
-        if self.playback.playing
-            && self.playback.decoder.is_none()
-            && self.session.auto_advance
-            && self.playback.slide_start.elapsed().as_secs_f32() >= self.session.slide_seconds
-        {
-            self.advance(1);
+        let cue_due = self
+            .playback
+            .selected
+            .and_then(|index| self.session.playlist.get(index))
+            .is_some_and(|item| {
+                show::duration_reached(
+                    &item.cue,
+                    self.playback
+                        .info
+                        .as_ref()
+                        .is_some_and(|info| info.is_video),
+                    self.playback.position,
+                    self.sequencer.elapsed,
+                    self.session.slide_seconds,
+                )
+            });
+        if self.playback.playing && !self.sequencer.transitioning() && (finished || cue_due) {
+            self.playback.pause();
+            self.playback.playing = true; // Keep the outgoing fade clock running on the final frame.
+            self.cue_finished();
+        } else if finished && self.sequencer.transitioning() {
+            let playing = self.playback.playing;
+            self.playback.pause();
+            self.playback.playing = playing;
+        }
+        let next = self.playback.selected.and_then(|index| {
+            if self.session.auto_advance {
+                show::next_index(index, self.session.playlist.len(), self.session.looping)
+            } else {
+                None
+            }
+        });
+        self.preloader.ensure(
+            next.map(|index| {
+                self.session.playlist[index]
+                    .path
+                    .to_string_lossy()
+                    .into_owned()
+            }),
+            self.playback.max_height,
+        );
+        self.preloader.poll();
+        if let Some(audio) = &self.playback.audio {
+            audio
+                .sink
+                .set_volume(self.session.volume * self.sequencer.gain());
+        }
+        if let Some(result) = self.bundle_job.as_ref().and_then(|rx| match rx.try_recv() {
+            Ok(result) => Some(result),
+            Err(mpsc::TryRecvError::Disconnected) => {
+                Some(Err(anyhow::anyhow!("Bundle worker stopped unexpectedly")))
+            }
+            Err(mpsc::TryRecvError::Empty) => None,
+        }) {
+            self.bundle_job = None;
+            match result {
+                Ok(report) => {
+                    self.status = format!(
+                        "Bundle saved · {} local assets · {} network cues",
+                        report.copied_files, report.network_cues
+                    )
+                }
+                Err(error) => self.error = Some(format!("{error:#}")),
+            }
         }
         if let Some(rx) = &self.exporting {
             match rx.try_recv() {
@@ -488,6 +694,8 @@ impl DomeApp {
             || self.playback.pending.is_some()
             || self.exporting.is_some()
             || self.screenshot.is_some()
+            || self.bundle_job.is_some()
+            || self.preloader.busy()
         {
             ctx.request_repaint_after(Duration::from_millis(16));
         }
@@ -555,7 +763,7 @@ impl DomeApp {
                                 .set_file_name("show.genexdomplayer.json")
                                 .save_file()
                             {
-                                match self.session.save(&path) {
+                                match self.session_for_save().save(&path) {
                                     Ok(()) => {
                                         self.mesh_history.mark_saved(&self.session.mesh);
                                         self.status = "Session saved".into();
@@ -611,6 +819,7 @@ impl DomeApp {
                 let mut choose = None;
                 let mut remove = None;
                 let mut move_item = None;
+                let mut replace = None;
                 egui::ScrollArea::vertical()
                     .id_salt("playlist")
                     .max_height((ui.available_height() - 235.).max(120.))
@@ -624,8 +833,7 @@ impl DomeApp {
                         for (index, item) in self.session.playlist.iter().enumerate() {
                             let selected = self.playback.selected == Some(index);
                             ui.horizontal(|ui| {
-                                let name =
-                                    item.path.file_name().unwrap_or_default().to_string_lossy();
+                                let name = item.label();
                                 let marker = if selected && self.playback.playing {
                                     "▶ "
                                 } else {
@@ -659,14 +867,19 @@ impl DomeApp {
                                         ));
                                         ui.close_menu();
                                     }
+                                    if ui.button("Replace / relink file…").clicked() {
+                                        ui.close_menu();
+                                        // File selection is handled after the playlist borrow ends.
+                                        replace = Some(index);
+                                    }
                                     if ui.button("Remove").clicked() {
                                         remove = Some(index);
                                         ui.close_menu();
                                     }
                                 });
                             });
-                            let missing = !item.path.to_string_lossy().starts_with("http")
-                                && !item.path.exists();
+                            let missing =
+                                !crate::bundle::is_network(&item.path) && !item.path.is_file();
                             let detail = if missing {
                                 "Missing file".into()
                             } else if selected {
@@ -701,8 +914,17 @@ impl DomeApp {
                 if let Some(index) = choose {
                     self.select(index);
                 }
+                if let Some(index) = replace {
+                    if let Some(path) = rfd::FileDialog::new().pick_file() {
+                        self.session.playlist[index].path = path;
+                        self.preloader.clear();
+                        self.select(index);
+                    }
+                }
                 if let Some((a, b)) = move_item {
                     self.session.playlist.swap(a, b);
+                    self.sequencer.reset();
+                    self.preloader.clear();
                     self.playback.selected = self.playback.selected.map(|index| {
                         if index == a {
                             b
@@ -715,6 +937,8 @@ impl DomeApp {
                 }
                 if let Some(index) = remove {
                     self.session.playlist.remove(index);
+                    self.sequencer.reset();
+                    self.preloader.clear();
                     if self.playback.selected == Some(index) {
                         self.playback.reset_source("No media selected".into());
                     } else if let Some(selected) = self.playback.selected {
@@ -774,7 +998,9 @@ impl DomeApp {
                     }
                     if ui
                         .add_enabled(
-                            self.playback.pending.is_none(),
+                            self.playback.pending.is_none()
+                                && (self.playback.selected.is_none()
+                                    || self.playback.info.is_some()),
                             egui::Button::new(if self.playback.playing {
                                 "Pause"
                             } else {
@@ -793,6 +1019,7 @@ impl DomeApp {
                         self.advance(1);
                     }
                     if ui.button("Stop").clicked() {
+                        self.sequencer.reset();
                         if let Err(error) = self.playback.rewind() {
                             self.error = Some(error.to_string());
                         }
@@ -828,7 +1055,9 @@ impl DomeApp {
                             .show_value(false),
                     );
                     if let Some(audio) = &self.playback.audio {
-                        audio.sink.set_volume(self.session.volume);
+                        audio
+                            .sink
+                            .set_volume(self.session.volume * self.sequencer.gain());
                     }
                 });
                 if let Some(duration) = self
@@ -860,6 +1089,7 @@ impl DomeApp {
                         ui.spinner();
                         if ui.small_button("Cancel load").clicked() {
                             self.playback.cancel_load();
+                            self.sequencer.reset();
                             self.status = "Load cancelled".into();
                         }
                     }
@@ -904,10 +1134,11 @@ impl DomeApp {
             ui.add_space(margin.y);
             ui.horizontal(|ui| {
                 ui.add_space(margin.x);
-                let mut view = self.session.view.clone();
+                let mut view = self.output_view();
                 if self.preview_source {
                     view.output = Output::Source;
                     view.blackout = false;
+                    view.brightness = self.session.view.brightness;
                 }
                 let response = renderer::canvas(ui, self.renderer.clone(), view, size);
                 if self.edit_mesh
@@ -1007,7 +1238,7 @@ impl DomeApp {
             self.error = Some("The selected display is disconnected. Reconnect it or choose another output display.".into());
             return;
         }
-        let view = self.session.view.clone();
+        let view = self.output_view();
         let renderer = self.renderer.clone();
         let mut close = false;
         let primary_scale = self
@@ -1085,7 +1316,7 @@ impl DomeApp {
                             ctx.request_repaint_after(Duration::from_millis(16));
                         } else {
                             let mut view = view.clone();
-                            view.blackout = self.session.view.blackout;
+                            view.blackout = self.output_view().blackout;
                             renderer::canvas(ui, renderer.clone(), view, ui.available_size());
                         }
                     });
@@ -1126,6 +1357,7 @@ impl eframe::App for DomeApp {
         if self.frame_count >= 12
             && self.playback.pending.is_none()
             && self.screenshot.is_some()
+            && (!self.screenshot_on_show_end || self.show_complete)
             && !self.screenshot_requested
         {
             self.screenshot_requested = true;
@@ -1157,7 +1389,14 @@ impl eframe::App for DomeApp {
             }
             ctx.send_viewport_cmd(egui::ViewportCommand::Close);
         }
-        if self.screenshot.is_some() && self.frame_count > 300 {
+        if self.screenshot.is_some()
+            && self.frame_count
+                > if self.screenshot_on_show_end {
+                    1800
+                } else {
+                    300
+                }
+        {
             eprintln!("Screenshot timed out");
             ctx.send_viewport_cmd(egui::ViewportCommand::Close);
         }
