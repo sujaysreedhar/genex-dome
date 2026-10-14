@@ -20,7 +20,11 @@ jobs:
       - name: Media integration tests
         shell: pwsh
         run: |
-          $env:PATH = "C:\ProgramData\chocolatey\bin;$env:PATH"
+          # Call FFmpeg itself: killing a Chocolatey shim can leave its child running.
+          $ffmpegBin = (Get-ChildItem 'C:\ProgramData\chocolatey\lib\ffmpeg\tools' -Recurse -Filter ffmpeg.exe | Select-Object -First 1).DirectoryName
+          if (-not $ffmpegBin) { throw 'FFmpeg binary directory was not found' }
+          $env:PATH = "$ffmpegBin;$env:PATH"
+          Write-Host "Media integration runtime: $ffmpegBin"
           cargo +stable test --locked --test media -- --ignored
       - name: Release build
         run: cargo +stable build --release --locked
