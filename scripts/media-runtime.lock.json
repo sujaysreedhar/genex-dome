@@ -1,0 +1,62 @@
+{
+  "ffmpeg": {
+    "version": "N-127367-gb5902e69c7-20261011",
+    "url": "https://github.com/BtbN/FFmpeg-Builds/releases/download/autobuild-2026-10-11-13-04/ffmpeg-N-127367-gb5902e69c7-win64-gpl.zip",
+    "file": "ffmpeg-pinned.zip",
+    "sha256": "e7a10f6e0a9c19d91ec4979ba60fe415a7da8588520bc46d75fec03d94fb9033"
+  },
+  "yt_dlp": {
+    "version": "2026.08.19",
+    "url": "https://github.com/yt-dlp/yt-dlp/releases/download/2026.08.19/yt-dlp.exe",
+    "file": "yt-dlp.exe",
+    "sha256": "66674953fe251b89f4d08c5f0e35e0728679bd67ab3d7d05c0562af101dd3e7a",
+    "local_cache": ".tools/media/yt-dlp.exe"
+  },
+  "deno": {
+    "version": "2.9.7",
+    "url": "https://github.com/denoland/deno/releases/download/v2.9.7/deno-x86_64-pc-windows-msvc.zip",
+    "file": "deno-pinned.zip",
+    "sha256": "a0c3101b4158d1dfb7d6a78a7bf0f3de80c96bb423c152beec8beb22786f2238",
+    "local_cache": ".tools/media-download/deno.zip"
+  },
+  "notices": [
+    {
+      "url": "https://raw.githubusercontent.com/yt-dlp/yt-dlp/2026.08.19/LICENSE",
+      "file": "yt-dlp-LICENSE.txt",
+      "sha256": "7e12e5df4bae12cb21581ba157ced20e1986a0508dd10d0e8a4ab9a4cf94e85c",
+      "destination": "licences/media/yt-dlp/LICENSE.txt"
+    },
+    {
+      "url": "https://raw.githubusercontent.com/yt-dlp/yt-dlp/2026.08.19/THIRD_PARTY_LICENSES.txt",
+      "file": "yt-dlp-THIRD-PARTY-LICENSES.txt",
+      "sha256": "472aefe951c7db35e1657c1d13fd337140511ed6f2b329205105ad441c5a02b7",
+      "destination": "licences/media/yt-dlp/THIRD-PARTY-LICENSES.txt"
+    },
+    {
+      "url": "https://raw.githubusercontent.com/denoland/deno/v2.9.7/LICENSE.md",
+      "file": "deno-LICENSE.txt",
+      "sha256": "f62497fffecc0852960c8d3e6934b9db86d16396e9b604072e923892cae3a588",
+      "destination": "licences/media/deno/LICENSE.txt"
+    }
+  ],
+  "sources": [
+    {
+      "url": "https://api.github.com/repos/FFmpeg/FFmpeg/tarball/b5902e69c7",
+      "file": "sources/ffmpeg-b5902e69c7.tar.gz",
+      "sha256": "ae8edc4352faf92ec571df4b826e37941602728ed0ac8d5abefc17d7141e632c",
+      "destination": "sources/media/ffmpeg-b5902e69c7.tar.gz"
+    },
+    {
+      "url": "https://api.github.com/repos/BtbN/FFmpeg-Builds/tarball/autobuild-2026-10-11-13-04",
+      "file": "sources/ffmpeg-build-recipes-20261011.tar.gz",
+      "sha256": "08ff6219c753e95f6304c68eb8e3a025073d237e62748ac48c02d1be897b114c",
+      "destination": "sources/media/ffmpeg-build-recipes-20261011.tar.gz"
+    },
+    {
+      "url": "https://github.com/yt-dlp/yt-dlp/releases/download/2026.08.19/yt-dlp.tar.gz",
+      "file": "sources/yt-dlp-2026.08.19.tar.gz",
+      "sha256": "072aad4f2a7604e92155f61a275a4752dc64046c8f6d90df3710525d94cd37c1",
+      "destination": "sources/media/yt-dlp-2026.08.19.tar.gz"
+    }
+  ]
+}

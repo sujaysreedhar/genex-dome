@@ -1,0 +1,51 @@
+GENEXDOME - WINDOWS QUICK START
+
+Requirements: 64-bit Windows 10 22H2 or 11, an OpenGL 3.3 capable GPU and driver.
+Rust, Cargo and a compiler are not required on the destination computer.
+
+INSTALLER
+Run the GenexDome windows-x64-setup.exe for this release. It installs for the
+current user under LocalAppData\Programs\GenexDome and adds Start menu shortcuts.
+A desktop shortcut is optional. Administrator privileges are not required.
+Re-run a newer installer to update the same installation.
+Remove it through Windows Settings > Apps or the Start menu uninstall shortcut.
+
+PORTABLE PACKAGE
+Extract the entire portable ZIP into a writable folder. Keep the executable,
+DLLs, assets and other files together. Run GenexDomPlayer.exe or Start-GenexDome.cmd.
+To try the sample show, open assets\show.genexdomplayer.json in the application.
+Moving the whole folder preserves the examples' relative paths.
+
+MOVIES, AUDIO AND ONLINE MEDIA
+FFmpeg, FFprobe, yt-dlp and Deno are included in the tools folder. No runtime
+downloads, Python installation, JavaScript installation or PATH changes are
+required. Setup and local movie/audio playback work without internet access.
+YouTube and other online media need internet access to stream the content.
+Keep the entire tools folder with the portable application when moving it.
+Bundled versions and checksums are in tools\runtime-manifest.json.
+The tools retain their own licences, notices and upstream source information
+under licences\media; source snapshots are included under sources\media.
+
+YOUR SHOWS
+Save sessions, calibration and show media in your Documents folder or another
+folder you control. Do not edit the bundled examples in place: updates replace
+packaged files. Uninstall removes files recorded by setup, preserves files you
+created. Bundled media tools are installed and removed with the application.
+Additional files you placed in tools or elsewhere in the installation remain.
+
+CHECKS AND SUPPORT
+In PowerShell, from the application folder:
+  .\GenexDomPlayer.exe doctor
+  .\GenexDomPlayer.exe check-show --session .\assets\show.genexdomplayer.json
+
+The distribution includes a package-manifest.json with SHA-256 checksums for
+its payload files. SHA256SUMS.txt beside the ZIP/setup verifies those downloads.
+These artifacts are not code signed. Review the source and build instructions:
+  https://github.com/sujaysreedhar/genex-dome
+Report issues with your Windows version, GPU and reproduction steps:
+  https://github.com/sujaysreedhar/genex-dome/issues
+
+See README.md for projection, calibration and portable-show instructions.
+Application licence: LICENSE. Dependency notices: THIRD-PARTY-NOTICES.txt
+and licences. Media notices: licences\media\BUNDLED-MEDIA-NOTICES.txt.
+Bundled font licence: assets\FONT-LICENSE.txt.

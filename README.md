@@ -37,7 +37,7 @@ The application currently uses the executable name `GenexDomPlayer` and the Carg
 - **Rust 1.88 or newer** and Cargo to build from source. See the [official Rust installation guide](https://rust-lang.org/tools/install/). On Windows, install the C++ build tools required by your chosen Rust toolchain.
 - **OpenGL 3.3** for the desktop renderer.
 - **FFmpeg and FFprobe** for movie playback, audio decoding, and desktop capture.
-- **yt-dlp** for YouTube URL resolution.
+- **yt-dlp** and **Deno 2.3+** (or **Node.js 22+**) for YouTube URL resolution. See [yt-dlp's JavaScript runtime requirements](https://github.com/yt-dlp/yt-dlp/wiki/EJS).
 - A projector and calibrated dome setup for physical dome output. You can explore the built-in scene, images, and calibration tools on a regular monitor.
 
 Images, built-in patterns, and calibration do not require the external media tools.
@@ -67,7 +67,7 @@ cargo run --release --locked -- --projection fisheye "path/to/show.mp4"
 
 After installing Rust and its build prerequisites, you can also double-click [Start-GenexDomPlayer.cmd](Start-GenexDomPlayer.cmd). The launcher uses an existing release or debug executable, or runs Cargo to build and start the application.
 
-To install portable Windows copies of FFmpeg, FFprobe, and yt-dlp, run this from PowerShell in the repository root:
+To install portable Windows copies of FFmpeg, FFprobe, yt-dlp, and Deno, run this from PowerShell in the repository root:
 
 ```powershell
 powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\install-media.ps1
@@ -78,6 +78,14 @@ cargo run --release --locked
 The installer downloads the media tools into `.tools/media`. The environment script configures the current shell to use available project-local tools. `.tools/` is excluded from Git and is **not included in a fresh clone**; install Rust separately unless you already have a local toolchain there.
 
 You can also place the media executables beside `GenexDomPlayer.exe` or make them available through your system `PATH`.
+
+For a YouTube resolver update without reinstalling FFmpeg, run:
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File .\scripts\install-media.ps1 -YouTubeOnly
+```
+
+The player explicitly enables available Deno and Node runtimes. It resolves video and audio separately when a combined stream is unavailable, forwarding each stream's HTTP headers to FFmpeg. Paused seeking retains the original YouTube URL and resolves a fresh pair of streams. Restart an already running player after rebuilding it.
 
 ### Try the included sessions
 
@@ -240,10 +248,25 @@ See [the validation record](docs/VALIDATION.md) for the documented CPU/GPU compa
 ### Package for Windows
 
 ```powershell
+.\scripts\install-inno.ps1  # first time: download the verified portable compiler
+.\scripts\prepare-media-bundle.ps1  # build-time download of pinned tools and notices
 .\scripts\package.ps1
+.\scripts\test-package.ps1
 ```
 
-The script builds the release executable and copies it, the assets, documentation, and licence into `dist/GenexDomPlayer`. Media tools remain separate; provide them beside the packaged executable or through `PATH` on the destination computer. Packaging uses the repository's existing `GenexDomPlayer` application name.
+This builds the release executable and produces these files in `dist/`:
+
+- `GenexDome-0.2.0-windows-x64-setup.exe`: a Windows 10 22H2/11 x64 installer with Start menu shortcuts, an optional desktop shortcut, and uninstall support. It installs for the current user without administrator privileges.
+- `GenexDome-0.2.0-windows-x64-portable.zip`: extract the whole archive and launch `GenexDomPlayer.exe` or `Start-GenexDome.cmd`.
+- `SHA256SUMS.txt`: checksums for the installer and ZIP.
+
+The unpacked payload is also available in `dist/GenexDomPlayer`. Both distributions include **FFmpeg, FFprobe, yt-dlp and Deno**, runtime DLLs for the local MinGW build, assets, documentation, third-party notices, upstream source snapshots, and checksum manifests. Rust, Cargo, Python, a separate JavaScript runtime and media-tool downloads are not needed on the destination computer. Generated package folders are replaced on each build; keep your shows outside `dist/`.
+
+Setup and local media playback work offline. YouTube and other online sources require internet access to stream their content. The tools live in the application's `tools` folder and are discovered without PATH changes. See [the distribution quick start](docs/DISTRIBUTION.txt) and [bundled-media notices](docs/BUNDLED-MEDIA-NOTICES.txt). Updates replace packaged examples; uninstall removes bundled tools and preserves user-created files. The artifacts are unsigned.
+
+The media preparation script caches checksum-verified inputs under `.tools/media-bundle`; subsequent builds reuse them. Versions and download hashes are pinned in `scripts/media-runtime.lock.json`. Refresh that lock and cached bundle when updating the tools; upstream daily FFmpeg assets have limited retention, so retain the verified cache for this release. `package.ps1` validates the prepared runtime before building either distribution. A custom prepared payload can be supplied with `-MediaBundleDir <path>`.
+
+Use `-PortableOnly` to package without Inno Setup, `-InnoCompiler <path>` for an existing compiler, or `-SkipBuild` to reuse a release executable that matches the current version. `test-package.ps1` verifies checksums, all bundled tools, JavaScript execution and local H.264/AAC movie loading/decoding with a clean PATH. `-YouTubeUrl <url>` optionally exercises a live network preview. `-TestInstaller` additionally tests a temporary install, reinstall and uninstall; it refuses to run when an existing GenexDome installation is registered. Installer tests use no shortcuts and preserve their logs under `test-output/`.
 
 ## Contributing
 
@@ -259,7 +282,7 @@ For bug reports, include your operating system, GPU, input projection, media for
 ## Status and limitations
 
 - The documented validation covers Windows builds, projection mathematics, GPU comparisons, CLI utilities, and generated media playback tests. See [docs/VALIDATION.md](docs/VALIDATION.md) for details.
-- Physical dome/projector calibration, audible speaker playback, live desktop capture, YouTube service access, and sustained 4K playback have not been verified in the recorded validation.
+- Physical dome/projector calibration, audible speaker playback, live desktop capture, and sustained 4K playback have not been verified in the recorded validation. YouTube preview, split-stream decoding and paused seeking were exercised with the source recorded in the validation notes.
 - Stereo output uses side-by-side or top/bottom packing. Frame-sequential projector synchronisation is not implemented.
 - Playback supports forward decoding and backward seeking. Continuous reverse playback is not implemented.
 - YouTube playback depends on the source's availability and the external resolver.

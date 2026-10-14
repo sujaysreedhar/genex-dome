@@ -14,7 +14,10 @@ use std::time::{Duration, Instant};
 fn switching_to_builtin_clears_video_and_queued_autoplay() {
     let mut playback = Playback {
         info: Some(MediaInfo {
+            source: "previous.mp4".into(),
             target: "previous.mp4".into(),
+            headers: vec![],
+            audio_source: None,
             width: 32,
             height: 32,
             duration: 60.,

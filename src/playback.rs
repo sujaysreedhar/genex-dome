@@ -190,7 +190,7 @@ impl Playback {
                 return self.play(volume);
             }
             if info.is_video {
-                self.load(info.target, self.position);
+                self.load(info.source, self.position);
             }
         }
         Ok(None)

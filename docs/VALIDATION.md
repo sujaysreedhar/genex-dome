@@ -1,5 +1,37 @@
 # Validation record
 
+## Self-contained Windows distribution — 13 October 2026 (0.2.0)
+
+- Rebuilt the `.exe` installer and portable ZIP with FFmpeg/FFprobe `N-127367-gb5902e69c7-20261011`, official yt-dlp `2026.08.19` and Deno `2.9.7`. Tools live in `tools` and are discovered relative to the application. Setup performs no software downloads; the earlier download helper is retired during upgrades.
+- Pinned and checked upstream archive/executable SHA-256 digests. Included a runtime version/hash manifest, upstream licence notices, FFmpeg and yt-dlp source snapshots, and the FFmpeg build-recipe snapshot. Build-time preparation caches inputs; installed users need no Rust, Python, Node installation or media-tool downloads.
+- All 410 payload checksums passed for the extracted ZIP, temporary install and reinstall. From an unrelated folder with only Windows system directories on PATH, FFmpeg/FFprobe and yt-dlp started, Deno evaluated JavaScript, and the application discovered the bundled runtime.
+- Bundled FFmpeg generated an H.264/AAC clip. The application exported its opening frame and decoded all 12 frames at 12 fps with zero late or overwritten frames in the one-second CPU-delivery benchmark. This does not measure audible output or projector performance.
+- A live preview of `https://www.youtube.com/watch?v=IrolgreFj2w` passed using the packaged application, a clean PATH and a fresh Deno cache. No external software installation or challenge-component download was requested.
+- Silent install, reinstall and uninstall passed. Reinstall retained a user session; uninstall removed the application, its bundled tools and uninstall registration while preserving the user session and an additional file in `tools`. PowerShell scripts parsed and Git whitespace checks passed.
+
+The bundled Windows distribution requires Windows 10 22H2 or Windows 11 x64 and remains unsigned. Local media works offline; online content requires internet. Clean second-machine acceptance and physical output remain installation checks. The historical installer-only validation below describes the earlier package before runtime bundling.
+
+## Windows installer and distribution — 13 October 2026 (0.2.0)
+
+- Built an Inno Setup installer and portable ZIP with runtime DLLs, examples, documentation, font/dependency licences, launch helpers and a SHA-256 payload manifest. The compiler bootstrap uses the official Inno Setup 7.1.0 download with its published SHA-256 digest.
+- The installer targets Windows 10/11 x64, installs per user, offers a desktop shortcut, adds Start menu entries and records files for uninstall. The media helper accepts an installation-local `-RuntimeDir` and preserves the existing `-YouTubeOnly` option and Deno download.
+- Tested the extracted ZIP and installed payload from paths containing spaces, with only Windows system directories on PATH and an unrelated working directory. All 396 payload hashes matched. Executable startup, the three-cue demo asset check, pattern generation and projected image export passed.
+- A temporary silent install, reinstall and uninstall passed. Reinstall retained a user session; uninstall removed the application and its registration while preserving that session and a separately created file in `tools`. The initial sandboxed install was denied registry access and rolled back; the same lifecycle passed with the required test access.
+- All PowerShell packaging scripts parsed successfully. The workflow in `.github/workflows/package.yml` defines packaging and installer lifecycle validation on tags or manual runs; it has not run on GitHub. Its MSVC branch requests a static C runtime; the locally validated package uses the LLVM MinGW toolchain.
+
+The distributed artifacts are unsigned. External media executables are downloaded separately by the included helper. Validation above covers this Windows machine; acceptance on a clean second computer, physical dome/projector output and sustained playback remain installation checks.
+
+## YouTube resolver repair — 13 October 2026 (0.2.0)
+
+- Reproduced the failure for `IrolgreFj2w`: the previous resolver did not enable the installed Node runtime, and `best[ext=mp4]/best` still failed after Node was enabled because this source had no available combined video/audio stream.
+- The resolver now explicitly enables detected Deno/Node runtimes and selects `bv*+ba/b/bv*`. Video and audio inputs retain their own URLs and HTTP headers, and paused seeking resolves the original source again. Network input reads have a 15-second timeout; the existing shared 30-second load deadline and cancellation controls remain in use.
+- The Windows media installer now includes portable Deno and supports `-YouTubeOnly` to update yt-dlp and Deno without reinstalling FFmpeg. Locally verified yt-dlp 2026.08.19, Deno 2.9.7 and Node 22.20.0.
+- Formatting and Clippy pass with warnings denied. All 56 standard tests and both optional local FFmpeg tests pass. Seven new standard tests cover split/combined/silent formats, stream-specific audio routing, runtime arguments, host matching and HTTP headers.
+- The opt-in live YouTube test passes for `https://www.youtube.com/watch?v=IrolgreFj2w`: preview, separate stereo PCM audio decoding, timed video delivery and paused seek retain both streams. The source was probed at 2880 × 2160 with a 42-second duration; the integration test decodes at a 360-pixel height. This test requires internet and is excluded from the offline CI suite.
+- Rebuilt the Windows release and local distribution package. Visually inspected the native release preview in `test-output/youtube-fixed.png`; the resolver metadata/check files in that ignored folder are transient and are not part of the repository.
+
+Audible speaker playback and physical A/V synchronization remain unverified. YouTube availability and extraction can change with the service and installed resolver versions.
+
 ## Show production and performance — 13 October 2026 (0.2.0)
 
 - Added per-cue source-view presets, names, durations, entry fades through black with audio gain, pause-aware still timing, and next-cue probe/opening-frame preloading. Non-looping shows stop at the final cue; EOF is retained if a short movie ends during its incoming fade.

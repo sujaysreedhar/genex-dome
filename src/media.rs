@@ -13,7 +13,7 @@ use std::{
 };
 
 #[derive(Clone)]
-struct LoadControl {
+pub(crate) struct LoadControl {
     cancelled: Arc<AtomicBool>,
     deadline: Instant,
     child: Arc<Mutex<Option<Child>>>,
@@ -37,7 +37,7 @@ impl LoadControl {
         );
         Ok(())
     }
-    fn output(&self, cmd: &mut Command) -> Result<Output> {
+    pub(crate) fn output(&self, cmd: &mut Command) -> Result<Output> {
         let mut active = self.child.lock().unwrap();
         self.check()?;
         let mut child = cmd
@@ -132,7 +132,7 @@ impl Drop for LoadJob {
     }
 }
 
-pub fn command(tool: &str) -> Command {
+pub(crate) fn tool_path(tool: &str) -> Option<PathBuf> {
     let exe = if cfg!(windows) {
         format!("{tool}.exe")
     } else {
@@ -148,12 +148,28 @@ pub fn command(tool: &str) -> Command {
             locations.push(parent.join("tools").join(&exe));
         }
     }
-    let mut cmd = Command::new(
-        locations
-            .into_iter()
-            .find(|p| p.exists())
-            .unwrap_or_else(|| PathBuf::from(exe)),
-    );
+    if let Some(path) = std::env::var_os("PATH") {
+        locations.extend(std::env::split_paths(&path).map(|folder| folder.join(&exe)));
+    }
+    let base = std::env::current_dir().ok()?;
+    locations
+        .into_iter()
+        .find(|path| path.is_file())
+        .map(|path| {
+            if path.is_relative() {
+                base.join(path)
+            } else {
+                path
+            }
+        })
+}
+pub fn command(tool: &str) -> Command {
+    let exe = if cfg!(windows) {
+        format!("{tool}.exe")
+    } else {
+        tool.to_owned()
+    };
+    let mut cmd = Command::new(tool_path(tool).unwrap_or_else(|| PathBuf::from(exe)));
     #[cfg(windows)]
     {
         use std::os::windows::process::CommandExt;
@@ -177,18 +193,37 @@ pub fn is_media(path: &Path) -> bool {
         })
 }
 pub fn runtime_status() -> String {
-    match command("ffmpeg").arg("-version").output() {
+    let ffmpeg = match command("ffmpeg").arg("-version").output() {
         Ok(o) if o.status.success() => String::from_utf8_lossy(&o.stdout)
             .lines()
             .next()
             .unwrap_or("FFmpeg available")
             .to_string(),
         _ => "FFmpeg missing · images and calibration work; install runtime for movies".into(),
-    }
+    };
+    let resolver = if tool_path("yt-dlp").is_some() {
+        "yt-dlp available"
+    } else {
+        "yt-dlp missing"
+    };
+    let runtimes: Vec<_> = ["deno", "node"]
+        .into_iter()
+        .filter(|name| tool_path(name).is_some())
+        .collect();
+    let javascript = if runtimes.is_empty() {
+        "JavaScript runtime missing; run scripts/install-media.ps1 -YouTubeOnly".into()
+    } else {
+        format!("JavaScript runtimes: {}", runtimes.join(", "))
+    };
+    format!("{ffmpeg}\n{resolver}\n{javascript}")
 }
 #[derive(Clone, Debug)]
 pub struct MediaInfo {
+    /// Original input, retained so paused seeks can resolve fresh video/audio URLs together.
+    pub source: String,
     pub target: String,
+    pub headers: Vec<(String, String)>,
+    pub audio_source: Option<crate::youtube::MediaInput>,
     pub width: u32,
     pub height: u32,
     pub duration: f64,
@@ -196,50 +231,46 @@ pub struct MediaInfo {
     pub is_video: bool,
     pub has_audio: bool,
 }
-fn resolve_url(target: &str, control: &LoadControl) -> Result<String> {
-    if target.contains("youtube.com/") || target.contains("youtu.be/") {
-        let out = control
-            .output(command("yt-dlp").args([
-                "--no-playlist",
-                "--get-url",
-                "-f",
-                "best[ext=mp4]/best",
-                target,
-            ]))
-            .context("YouTube needs yt-dlp in tools or PATH")?;
-        anyhow::ensure!(
-            out.status.success(),
-            "YouTube resolver: {}",
-            String::from_utf8_lossy(&out.stderr)
-        );
-        Ok(String::from_utf8(out.stdout)?
-            .lines()
-            .next()
-            .context("No playable URL returned")?
-            .to_string())
-    } else {
-        Ok(target.to_owned())
+impl MediaInfo {
+    pub fn video_input(&self, cmd: &mut Command) {
+        crate::youtube::configure_input(cmd, &self.target, &self.headers);
+    }
+    pub fn audio_input(&self, cmd: &mut Command) {
+        if let Some(audio) = &self.audio_source {
+            audio.configure(cmd);
+        } else {
+            self.video_input(cmd);
+        }
     }
 }
 pub fn probe(target: &str) -> Result<MediaInfo> {
     probe_controlled(target, &LoadControl::new(Duration::from_secs(30)))
 }
 fn probe_controlled(target: &str, control: &LoadControl) -> Result<MediaInfo> {
-    let target = resolve_url(target, control)?;
-    let out = control
-        .output(command("ffprobe").args([
-            "-v",
-            "error",
-            "-show_entries",
-            "stream=codec_type,width,height,avg_frame_rate:format=duration",
-            "-of",
-            "json",
-            "-i",
-            &target,
-        ]))
-        .context(
-            "FFprobe missing. Run scripts/install-media.ps1 or put FFmpeg and FFprobe in PATH.",
-        )?;
+    let resolved = if crate::youtube::is_youtube_url(target) {
+        crate::youtube::resolve(target, control)?
+    } else {
+        crate::youtube::ResolvedMedia {
+            video: crate::youtube::MediaInput {
+                target: target.into(),
+                headers: vec![],
+            },
+            audio: None,
+        }
+    };
+    let mut cmd = command("ffprobe");
+    cmd.args([
+        "-v",
+        "error",
+        "-show_entries",
+        "stream=codec_type,width,height,avg_frame_rate:format=duration",
+        "-of",
+        "json",
+    ]);
+    resolved.video.configure(&mut cmd);
+    let out = control.output(&mut cmd).context(
+        "FFprobe missing. Run scripts/install-media.ps1 or put FFmpeg and FFprobe in PATH.",
+    )?;
     anyhow::ensure!(
         out.status.success(),
         "Cannot open media: {}",
@@ -262,13 +293,16 @@ fn probe_controlled(target: &str, control: &LoadControl) -> Result<MediaInfo> {
         .and_then(|s| s.parse().ok())
         .unwrap_or(0.);
     Ok(MediaInfo {
-        target,
+        source: target.into(),
+        target: resolved.video.target,
+        headers: resolved.video.headers,
         width,
         height,
         duration,
         frame_rate: parse_frame_rate(video["avg_frame_rate"].as_str().unwrap_or("")),
         is_video: true,
-        has_audio: streams.iter().any(|s| s["codec_type"] == "audio"),
+        has_audio: resolved.audio.is_some() || streams.iter().any(|s| s["codec_type"] == "audio"),
+        audio_source: resolved.audio,
     })
 }
 pub fn load(target: &str, seek: f64, max_height: u32) -> Result<(MediaInfo, RgbaImage)> {
@@ -292,7 +326,10 @@ fn load_controlled(
             .decode()?
             .to_rgba8();
         let info = MediaInfo {
+            source: target.into(),
             target: target.into(),
+            headers: vec![],
+            audio_source: None,
             width: image.width(),
             height: image.height(),
             duration: 0.,
@@ -305,13 +342,10 @@ fn load_controlled(
     }
     let info = probe_controlled(target, control)?;
     let (w, h) = decode_size(&info, max_height);
-    let out = control.output(command("ffmpeg").args([
-        "-v",
-        "error",
-        "-ss",
-        &seek.to_string(),
-        "-i",
-        &info.target,
+    let mut cmd = command("ffmpeg");
+    cmd.args(["-v", "error", "-ss", &seek.to_string()]);
+    info.video_input(&mut cmd);
+    let out = control.output(cmd.args([
         "-map",
         "0:v:0",
         "-frames:v",
@@ -399,13 +433,9 @@ impl Decoder {
             30.
         };
         let mut cmd = command("ffmpeg");
+        cmd.args(["-v", "error", "-ss", &start.to_string()]);
+        info.video_input(&mut cmd);
         cmd.args([
-            "-v",
-            "error",
-            "-ss",
-            &start.to_string(),
-            "-i",
-            &info.target,
             "-map",
             "0:v:0",
             "-an",
@@ -661,24 +691,12 @@ impl Audio {
         let (stream, handle) =
             rodio::OutputStream::try_default().context("No audio output device")?;
         let sink = rodio::Sink::try_new(&handle)?;
-        let mut child = command("ffmpeg")
+        let mut cmd = command("ffmpeg");
+        cmd.args(["-v", "error", "-ss", &position.to_string()]);
+        info.audio_input(&mut cmd);
+        let mut child = cmd
             .args([
-                "-v",
-                "error",
-                "-ss",
-                &position.to_string(),
-                "-i",
-                &info.target,
-                "-map",
-                "0:a:0",
-                "-vn",
-                "-f",
-                "s16le",
-                "-ac",
-                "2",
-                "-ar",
-                "48000",
-                "pipe:1",
+                "-map", "0:a:0", "-vn", "-f", "s16le", "-ac", "2", "-ar", "48000", "pipe:1",
             ])
             .stdin(Stdio::null())
             .stdout(Stdio::piped())
@@ -712,6 +730,42 @@ impl Drop for Audio {
 #[cfg(test)]
 mod process_tests {
     use super::*;
+    #[test]
+    fn audio_decode_uses_the_resolved_audio_input_and_its_headers() {
+        let mut info = MediaInfo {
+            source: "https://www.youtube.com/watch?v=test".into(),
+            target: "https://cdn.example/video".into(),
+            headers: vec![("User-Agent".into(), "video-agent".into())],
+            audio_source: Some(crate::youtube::MediaInput {
+                target: "https://cdn.example/audio".into(),
+                headers: vec![("User-Agent".into(), "audio-agent".into())],
+            }),
+            width: 128,
+            height: 64,
+            duration: 1.,
+            frame_rate: 30.,
+            is_video: true,
+            has_audio: true,
+        };
+        let args = |cmd: &Command| {
+            cmd.get_args()
+                .map(|arg| arg.to_string_lossy().into_owned())
+                .collect::<Vec<_>>()
+        };
+        let mut video = Command::new("ffmpeg");
+        info.video_input(&mut video);
+        assert!(args(&video).contains(&"https://cdn.example/video".into()));
+        let mut audio = Command::new("ffmpeg");
+        info.audio_input(&mut audio);
+        let audio_args = args(&audio);
+        assert!(audio_args.contains(&"https://cdn.example/audio".into()));
+        assert!(audio_args.contains(&"User-Agent: audio-agent\r\n".into()));
+        assert!(!audio_args.contains(&info.target));
+        info.audio_source = None;
+        let mut combined = Command::new("ffmpeg");
+        info.audio_input(&mut combined);
+        assert_eq!(args(&combined), args(&video));
+    }
     #[test]
     fn child_waits() {
         if std::env::var_os("GENEX_TEST_WAIT_CHILD").is_some() {

@@ -1,0 +1,49 @@
+GENEXDOME - BUNDLED MEDIA TOOL NOTICES
+
+These unmodified external programs run as separate processes. GenexDome's
+application source remains under its MIT licence. Each tool and its embedded
+components retain the licences reproduced below and in their notice folders.
+The exact build inputs and SHA-256 hashes are recorded in media-runtime.lock.json.
+
+FFMPEG AND FFPROBE
+Version: N-127367-gb5902e69c7-20261011, Windows x86-64 GPL static build.
+Copyright (c) 2000-2026 the FFmpeg developers and contributors.
+Binary supplier: https://github.com/BtbN/FFmpeg-Builds
+Build release: https://github.com/BtbN/FFmpeg-Builds/releases/tag/autobuild-2026-10-11-13-04
+Licence: GPL version 3 or later; see ffmpeg/LICENSE.txt.
+Configure flags and component choices: ffmpeg/BUILD-CONFIG.txt.
+FFmpeg source snapshot: sources/media/ffmpeg-b5902e69c7.tar.gz in the package.
+Build recipes snapshot: sources/media/ffmpeg-build-recipes-20261011.tar.gz.
+Those recipes contain the external component repositories, versions, patches
+and build commands used by the supplier. External component source locations
+are recorded in their scripts.d entries. The archived recipe commit is:
+  https://github.com/BtbN/FFmpeg-Builds/tree/63ac3265b0789ea16c7b1f8351cd2ad195a28722
+FFmpeg source revision:
+  https://github.com/FFmpeg/FFmpeg/tree/b5902e69c7
+Licensing details: https://ffmpeg.org/legal.html
+
+YT-DLP
+Version: 2026.08.19, official Windows x86-64 executable.
+Project: https://github.com/yt-dlp/yt-dlp
+Release: https://github.com/yt-dlp/yt-dlp/releases/tag/2026.08.19
+yt-dlp itself: Unlicense, reproduced in yt-dlp/LICENSE.txt.
+The official executable also includes third-party code. Its distribution
+licences, attribution and upstream source information are reproduced in
+yt-dlp/THIRD-PARTY-LICENSES.txt; the combined executable is GPLv3+.
+Release source snapshot: sources/media/yt-dlp-2026.08.19.tar.gz in the package.
+The official source/build instructions and dependencies are retained there.
+The official executable includes the external JavaScript challenge components.
+
+DENO
+Version: 2.9.7, official Windows x86-64 executable.
+Copyright (c) 2018-2026 the Deno authors.
+Licence: MIT, reproduced in deno/LICENSE.txt.
+Project and source: https://github.com/denoland/deno/tree/v2.9.7
+Release: https://github.com/denoland/deno/releases/tag/v2.9.7
+Embedded runtime versions: V8 15.0.245.2-rusty and TypeScript 6.0.3.
+Deno dependencies retain their upstream licences; their exact versions and
+source registry hashes are recorded in Deno's Cargo.lock at the source above.
+
+The bundled executables are not modified. Source archives and notices do not
+need to be unpacked to run the application. Setup installs these files locally
+and does not download software. Online streams still require network access.
