@@ -30,6 +30,9 @@ vec3 direction_from_mesh(vec2 p){
     if(mesh_projection==4){float lon=(p.x-0.5)*2.0*PI,lat=(0.5-p.y)*PI;return vec3(cos(lat)*sin(lon),sin(lat),cos(lat)*cos(lon));}
     if(mesh_projection==3){float lon=(p.x-0.5)*2.0*PI;return normalize(vec3(sin(lon),(1.0-2.0*p.y)*tan(source_fov*0.25),cos(lon)));}
     if(mesh_projection==1){float t=tan(source_fov*0.5);return normalize(vec3((p.x*2.0-1.0)*t,(1.0-p.y*2.0)*t/source_aspect,1.0));}
+    // Remaining header: 5 (cubemap). Header 2 never arrives, because the caller routes fisheye
+    // meshes to the dome path, and WarpMesh::validate rejects 6. This is not a catch-all: a new
+    // header code needs its own branch here and in projection::direction_from_uv.
     vec2 q=min(p*vec2(3.0,2.0),vec2(2.999999,1.999999));int face=int(floor(q.x))+int(floor(q.y))*3;vec2 st=fract(q)*2.0-1.0;
     if(face==0)return normalize(vec3(1.0,-st.y,-st.x));if(face==1)return normalize(vec3(-1.0,-st.y,st.x));if(face==2)return normalize(vec3(st.x,1.0,st.y));if(face==3)return normalize(vec3(st.x,-1.0,-st.y));if(face==4)return normalize(vec3(st.x,-st.y,1.0));return normalize(vec3(-st.x,-st.y,-1.0));
 }

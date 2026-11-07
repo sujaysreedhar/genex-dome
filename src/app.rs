@@ -35,6 +35,10 @@ pub struct Launch {
     pub screenshot_on_show_end: bool,
     pub gpu_check: Option<PathBuf>,
     pub panel: Option<String>,
+    /// Startup detail worth stating once, such as an automatically loaded calibration.
+    pub notice: Option<String>,
+    /// Non-fatal startup problem, shown as a dismissible banner.
+    pub warning: Option<String>,
 }
 #[derive(PartialEq, Eq, Clone, Copy)]
 enum Tab {
@@ -120,7 +124,7 @@ impl DomeApp {
             candidate_mesh: None,
             preview_source: false,
             status: "Built-in 360° scene · drag the preview to look around".into(),
-            error: None,
+            error: launch.warning,
             tab: match launch.panel.as_deref() {
                 Some("calibration") => Tab::Calibration,
                 Some("output") => Tab::Output,
@@ -154,6 +158,10 @@ impl DomeApp {
             app.playback.startup_autoplay = launch.autoplay;
         } else if app.session.built_in_source.is_some() {
             app.status = "Built-in presentation source".into();
+        }
+        // Stated after the source branches above, which set their own status line.
+        if let Some(message) = launch.notice {
+            app.status = message;
         }
         if launch.fullscreen {
             cc.egui_ctx

@@ -398,7 +398,13 @@ impl Renderer {
                     .map(|(a, b)| a.abs_diff(*b) as u64)
                     .collect();
                 let mean = differences.iter().sum::<u64>() as f64 / differences.len() as f64;
-                report.push_str(&format!("{label}: mean channel difference {mean:.4}/255\n"));
+                // The mean hides narrow defects: a one-pixel seam column across this frame
+                // moves it by far less than the tolerance below, which is how a clamped 360°
+                // seam passed these checks. Record the worst channel so it stays visible.
+                let worst = differences.iter().copied().max().unwrap_or(0);
+                report.push_str(&format!(
+                    "{label}: mean channel difference {mean:.4}/255 · worst {worst}/255\n"
+                ));
                 if mean > 3. {
                     failure = Some(format!("GPU/CPU mismatch for {label}: {mean:.2}"));
                 }
@@ -447,6 +453,15 @@ impl Renderer {
             gl.bind_vertex_array(Some(if use_mesh { self.mesh_vao } else { self.vao }));
             gl.active_texture(glow::TEXTURE0);
             gl.bind_texture(glow::TEXTURE_2D, Some(self.texture));
+            // Follow the CPU sampler in render_cpu: a 360° source must blend across the
+            // u = 0/1 seam instead of clamping to its edge texels. Vertical sampling always
+            // clamps, because no supported projection repeats top to bottom.
+            let wrap_s = if view.input.wraps_horizontally() {
+                glow::REPEAT
+            } else {
+                glow::CLAMP_TO_EDGE
+            };
+            gl.tex_parameter_i32(glow::TEXTURE_2D, glow::TEXTURE_WRAP_S, wrap_s as i32);
             gl.active_texture(glow::TEXTURE1);
             gl.bind_texture(glow::TEXTURE_2D, self.background.or(Some(self.texture)));
             gl.active_texture(glow::TEXTURE0);

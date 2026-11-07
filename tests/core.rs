@@ -37,6 +37,40 @@ fn malformed_mesh_is_rejected() {
     assert!(WarpMesh::parse(&m.to_text()).is_err());
 }
 #[test]
+fn prewarped_mesh_header_is_rejected_in_every_entry_path() {
+    // Header 6 names no source mapping. While it was accepted, the GL path read it as a
+    // cubemap and render_cpu discarded the pixel, so the two renderers disagreed on one file.
+    let mut mesh = WarpMesh::identity(3, 3, 1.);
+    mesh.projection = Projection::Prewarped;
+    assert!(mesh.to_text().starts_with("6\n"), "expected header 6");
+    assert!(mesh.validate().is_err());
+    assert!(WarpMesh::parse(&mesh.to_text()).is_err());
+    let session = Session {
+        mesh: Some(mesh),
+        ..Session::default()
+    };
+    assert!(session.validate().is_err());
+    let rejected: Vec<_> = Projection::ALL
+        .into_iter()
+        .filter(|projection| {
+            let mut candidate = WarpMesh::identity(3, 3, 1.);
+            candidate.projection = *projection;
+            candidate.validate().is_err()
+        })
+        .collect();
+    assert_eq!(rejected, [Projection::Prewarped]);
+}
+#[test]
+fn only_seamless_sources_wrap_horizontally() {
+    // render_cpu and the GL sampler both read this one rule, so the seam of a 360° source
+    // cannot blend in the exported PNG and clamp on the projector.
+    let wrapping: Vec<_> = Projection::ALL
+        .into_iter()
+        .filter(|projection| projection.wraps_horizontally())
+        .collect();
+    assert_eq!(wrapping, [Projection::Equirectangular, Projection::Cylindrical]);
+}
+#[test]
 fn comments_in_mesh_are_supported() {
     let text = format!(
         "# calibration\n{}\n# end",

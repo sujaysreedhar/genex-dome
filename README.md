@@ -210,7 +210,9 @@ cargo run --release --locked -- benchmark --input movie.mp4 --seconds 10 --max-h
 
 `export --session` uses the session's view settings. Without a session, use `--projection`, `--mode`, `--yaw`, and `--pitch` to configure the export. `--mesh` selects mesh output. Movie exports use the first frame.
 
-At startup, `default.data` or `warpmap.data` in the working directory is loaded automatically when no explicit `--mesh` is supplied. Saved local media paths are absolute; those files must remain accessible when you move a session to another computer.
+At startup, `default.data` or `warpmap.data` is loaded automatically when no explicit `--mesh` is supplied, taken from the working directory first and then from the folder holding the executable. Loading one switches the output to spherical mirror / mesh and says so in the status line. A file that cannot be read is reported and skipped, so a stray or damaged mesh never stops the application opening; pass `--mesh` when a calibration is required and startup should fail without it.
+
+Saved local media paths are absolute; those files must remain accessible when you move a session to another computer.
 
 For all available command-line options:
 

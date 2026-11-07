@@ -284,12 +284,7 @@ pub fn render_cpu(
                         Stereo::SideBySide => uv[0] = (uv[0] + eye as f32) / 2.,
                         Stereo::TopBottom => uv[1] = (uv[1] + eye as f32) / 2.,
                     }
-                    Some(bilinear(
-                        source,
-                        uv,
-                        view.input == Projection::Equirectangular
-                            || view.input == Projection::Cylindrical,
-                    ))
+                    Some(bilinear(source, uv, view.input.wraps_horizontally()))
                 } else {
                     background
                         .as_ref()

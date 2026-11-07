@@ -46,6 +46,13 @@ impl WarpMesh {
         }
     }
     pub fn validate(&self) -> Result<()> {
+        // A mesh header names the projection its UV coordinates are expressed in, and a
+        // prewarped source has no direction mapping to express. Accepting header 6 left the
+        // GL path reading it as a cubemap while render_cpu discarded the pixel.
+        ensure!(
+            self.projection != Projection::Prewarped,
+            "Mesh header 6 (prewarped) has no source mapping; use a projection header 1–5"
+        );
         ensure!(
             (2..=512).contains(&self.width) && (2..=512).contains(&self.height),
             "Mesh dimensions must be 2–512 nodes per axis"

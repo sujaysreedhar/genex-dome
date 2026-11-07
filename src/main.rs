@@ -126,6 +126,20 @@ fn parse_projection(s: &str) -> Result<Projection> {
         _ => anyhow::bail!("Unknown projection: {s}"),
     })
 }
+/// `default.data` or `warpmap.data` in the working directory, as documented, then beside the
+/// executable, so an installed copy finds the calibration shipped next to it.
+fn discover_mesh() -> Option<PathBuf> {
+    let mut roots = vec![PathBuf::from(".")];
+    if let Ok(exe) = std::env::current_exe() {
+        if let Some(parent) = exe.parent() {
+            roots.push(parent.to_path_buf());
+        }
+    }
+    roots
+        .into_iter()
+        .flat_map(|root| ["default.data", "warpmap.data"].map(|name| root.join(name)))
+        .find(|path| path.is_file())
+}
 fn run() -> Result<()> {
     let cli = Cli::parse();
     if let Some(command) = cli.command {
@@ -267,15 +281,33 @@ fn run() -> Result<()> {
     for path in cli.files {
         session.playlist.push(PlaylistItem::new(path, input));
     }
-    let mesh_path = cli.mesh.or_else(|| {
-        ["default.data", "warpmap.data"]
-            .into_iter()
-            .map(PathBuf::from)
-            .find(|p| p.exists())
-    });
-    if let Some(path) = mesh_path {
+    let (mut notice, mut warning) = (None, None);
+    if let Some(path) = cli.mesh {
+        // An explicit --mesh must fail loudly rather than start without the calibration.
         session.mesh = Some(WarpMesh::load(&path)?);
         session.view.output = Output::Mirror;
+    } else if let Some(path) = discover_mesh() {
+        match WarpMesh::load(&path) {
+            Ok(mesh) => {
+                session.mesh = Some(mesh);
+                session.view.output = Output::Mirror;
+                notice = Some(format!(
+                    "Auto-loaded {} · output set to spherical mirror / mesh",
+                    path.display()
+                ));
+            }
+            // A stray or damaged file must not stop the application opening, and a window
+            // that never appears cannot report why: carry the reason into the console.
+            Err(error) => {
+                warning = Some(format!(
+                    "Ignored warp mesh {}: {error}. Pass --mesh to require one.",
+                    path.display()
+                ));
+            }
+        }
+    }
+    if let Some(message) = &warning {
+        eprintln!("GenexDomPlayer: {message}");
     }
     anyhow::ensure!(
         !cli.screenshot_on_show_end
@@ -295,6 +327,8 @@ fn run() -> Result<()> {
         screenshot_on_show_end: cli.screenshot_on_show_end,
         gpu_check: cli.gpu_check,
         panel: cli.panel,
+        notice,
+        warning,
     };
     let options = eframe::NativeOptions {
         viewport: eframe::egui::ViewportBuilder::default()

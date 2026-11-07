@@ -40,6 +40,12 @@ impl Projection {
             Self::Prewarped => 6,
         }
     }
+    /// True when the source is continuous across its left and right edges, so horizontal
+    /// sampling must wrap. The CPU sampler and the GL sampler must agree on this, or the
+    /// seam of a 360° source lands in one path and not the other.
+    pub fn wraps_horizontally(self) -> bool {
+        matches!(self, Self::Equirectangular | Self::Cylindrical)
+    }
     pub fn from_code(code: i32) -> anyhow::Result<Self> {
         Ok(match code {
             1 => Self::Perspective,
