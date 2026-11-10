@@ -66,6 +66,8 @@ pub struct DomeApp {
     preview_source: bool,
     status: String,
     error: Option<String>,
+    /// Startup notice held back until the first media load reports, which rewrites `status`.
+    startup_notice: Option<String>,
     tab: Tab,
     projector: bool,
     projector_fullscreen: bool,
@@ -124,7 +126,8 @@ impl DomeApp {
             candidate_mesh: None,
             preview_source: false,
             status: "Built-in 360° scene · drag the preview to look around".into(),
-            error: launch.warning,
+            error: None,
+            startup_notice: None,
             tab: match launch.panel.as_deref() {
                 Some("calibration") => Tab::Calibration,
                 Some("output") => Tab::Output,
@@ -159,9 +162,16 @@ impl DomeApp {
         } else if app.session.built_in_source.is_some() {
             app.status = "Built-in presentation source".into();
         }
-        // Stated after the source branches above, which set their own status line.
-        if let Some(message) = launch.notice {
+        // Both are set after the source branches above: selecting a cue clears `error` and
+        // writes its own status line. While media is still loading, the notice waits for the
+        // load result, which would otherwise replace it within a few frames.
+        if app.playback.selected.is_some() {
+            app.startup_notice = launch.notice;
+        } else if let Some(message) = launch.notice {
             app.status = message;
+        }
+        if launch.warning.is_some() {
+            app.error = launch.warning;
         }
         if launch.fullscreen {
             cc.egui_ctx
@@ -534,6 +544,9 @@ impl DomeApp {
                     self.status = "Media could not be loaded".into();
                     self.error = Some(format!("{error:#}"));
                 }
+            }
+            if let Some(notice) = self.startup_notice.take() {
+                self.status = format!("{} · {notice}", self.status);
             }
         }
         let mut finished = self.playback.ended;

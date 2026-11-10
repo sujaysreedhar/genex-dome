@@ -272,6 +272,7 @@ fn run() -> Result<()> {
         }
         return Ok(());
     }
+    let from_session = cli.session.is_some();
     let mut session = if let Some(p) = cli.session {
         Session::load(&p)?
     } else {
@@ -286,6 +287,9 @@ fn run() -> Result<()> {
         // An explicit --mesh must fail loudly rather than start without the calibration.
         session.mesh = Some(WarpMesh::load(&path)?);
         session.view.output = Output::Mirror;
+    } else if from_session {
+        // A saved session states its own calibration and output; a mesh that merely happens
+        // to sit in the working directory or beside the executable must not replace them.
     } else if let Some(path) = discover_mesh() {
         match WarpMesh::load(&path) {
             Ok(mesh) => {
